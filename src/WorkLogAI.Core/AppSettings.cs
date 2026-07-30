@@ -85,7 +85,7 @@ public sealed class AppSettingsService(ISettingsStore store)
     private static IReadOnlyList<string> ParsePaths(string? value) =>
         string.IsNullOrWhiteSpace(value)
             ? []
-            : value.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            : value.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
 }

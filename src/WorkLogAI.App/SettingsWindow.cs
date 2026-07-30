@@ -204,7 +204,7 @@ public sealed class SettingsWindow : Window
     };
 
     private static IReadOnlyList<string> ParsePaths(string value) =>
-        value.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        value.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 }
