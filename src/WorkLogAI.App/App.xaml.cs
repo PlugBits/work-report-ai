@@ -269,6 +269,7 @@ public partial class App : System.Windows.Application
             _services.Settings,
             _services.Credentials,
             _services.StartupRegistrar,
+            _services.CreateGraphAuth,
             _sampleMode).ShowDialog();
     }
 }

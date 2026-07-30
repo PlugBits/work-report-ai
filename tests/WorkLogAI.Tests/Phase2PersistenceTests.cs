@@ -56,6 +56,29 @@ public sealed class Phase2PersistenceTests
         Assert.Contains("implemented local parser", candidate.Activity);
     }
 
+    [Theory]
+    [InlineData(SourceTypes.OutlookMail, "メール対応")]
+    [InlineData(SourceTypes.Calendar, "会議・予定")]
+    public void Local_mapping_labels_graph_sources_and_keeps_calendar_pending(
+        string sourceType,
+        string expectedWorkItem)
+    {
+        var source = SourceEventFactory.Create(
+            new DateTimeOffset(2026, 7, 30, 9, 0, 0, TimeSpan.FromHours(-4)),
+            sourceType,
+            "件名",
+            "本文",
+            "宛先: 田中太郎",
+            "graph:1",
+            sourceType == SourceTypes.OutlookMail ? .7 : .5);
+
+        var candidate = new LocalSourceEventMapper().Map(source, new DateOnly(2026, 7, 27));
+
+        Assert.Equal(expectedWorkItem, candidate.WorkItem);
+        Assert.Equal("pending", candidate.Status);
+        Assert.Equal(string.Empty, candidate.ResultOrNext);
+    }
+
     [Fact]
     public async Task Candidate_replace_is_transactional_and_idempotent_with_json_evidence()
     {

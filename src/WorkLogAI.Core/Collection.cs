@@ -103,6 +103,8 @@ public sealed class LocalSourceEventMapper
             SourceTypes.Git => "ローカルGit",
             SourceTypes.Codex => "Codex作業",
             SourceTypes.File => "更新ファイル",
+            SourceTypes.OutlookMail => "メール対応",
+            SourceTypes.Calendar => "会議・予定",
             _ => "ローカル記録"
         };
 
@@ -134,6 +136,8 @@ public static class SourceTypes
     public const string Git = "git";
     public const string Codex = "codex";
     public const string File = "file";
+    public const string OutlookMail = "outlook_mail";
+    public const string Calendar = "calendar";
 }
 
 public static class SourceEventFactory
