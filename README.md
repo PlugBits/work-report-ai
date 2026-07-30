@@ -21,8 +21,9 @@ This repository currently implements Phases 1 through 4.
 
 ## Phase 2 features
 
-- A user-triggered **今週の候補を生成** action collects only configured local
-  repositories and folders.
+- A user-triggered **候補を生成…** action (originally 今週の候補を生成; now
+  preceded by a week picker, see Usability additions) collects only configured
+  local repositories and folders.
 - Local Git collection uses the installed `git` executable without a shell. It reads
   commit metadata, filenames, line statistics, and uncommitted filenames, never
   source contents or diffs.
@@ -79,6 +80,26 @@ This repository currently implements Phases 1 through 4.
   published, self-contained EXE — running through `dotnet run`/the dotnet host is
   rejected with a Japanese error — and the option is disabled entirely in
   `--sample-data` mode.
+- **候補を生成…** opens a week picker (今週 plus the previous 7 weeks, newest
+  first) before running collection/generation, instead of always targeting the
+  week containing today. The picker's option list is built by the pure
+  `WeekOptionBuilder`; only its Japanese labels live in the App layer.
+- The weekly review's **Excel出力** checks coverage of selected rows only and, if
+  any Monday–Friday day has zero selected candidates, shows a Yes/No confirmation
+  listing the blank weekdays before exporting. Weekends never trigger it.
+- Both **Excel出力** actions (weekly review and history) ask **ファイルを開きますか？**
+  after a successful export and open the file with the OS default handler on Yes.
+- A best-effort local error log (`ErrorLog`) appends `context`/exception
+  type+message+stack lines to a monthly file under
+  `%LOCALAPPDATA%\WorkLog AI\Logs\worklog-YYYYMM.log`, created on demand and
+  pruned past 3 months. It never logs note bodies, candidate text, mail content,
+  or secrets, and logging itself can never throw.
+- A weekly, best-effort SQLite file backup (`DatabaseBackupService`) runs at
+  startup (skipped in `--sample-data` mode) before any database connection opens.
+  If the production DB exists and no backup is newer than 7 days, it copies the
+  file to `%LOCALAPPDATA%\WorkLog AI\Backups\worklog-YYYYMMDD.db` (same-day
+  overwrite) and keeps only the newest 4 backups. All failures are swallowed and
+  written to the error log; backups never block startup.
 
 ## Phase 4 features
 
@@ -116,9 +137,9 @@ permissions. Enter its client ID (and tenant ID, if not using the default `commo
 multi-tenant endpoint) in **設定**, then use **Microsoftサインイン** to complete
 sign-in in the system browser before enabling mail/calendar collection.
 
-GitHub network APIs, installers, crash recovery, log rotation, and automatic updates
-remain intentionally absent. Auto-start is the one Phase 5 item already implemented
-(see Usability additions above).
+GitHub network APIs, installers, and automatic updates remain intentionally absent.
+Auto-start, the local error log, and the weekly database backup are the Phase 5
+operational-quality items already implemented (see Usability additions above).
 
 ## Requirements and build
 
@@ -136,7 +157,7 @@ The `WorkLogAI.App` WPF project (`net8.0-windows`) only builds on Windows. On
 non-Windows hosts, build and run `WorkLogAI.Tests` with
 `-p:EnableWindowsTargeting=true`, e.g.
 `dotnet test tests/WorkLogAI.Tests/WorkLogAI.Tests.csproj -p:EnableWindowsTargeting=true`.
-The suite currently has 103 tests.
+The suite currently has 132 tests.
 
 Create the specified self-contained, single-file Windows build with:
 
@@ -174,13 +195,16 @@ The paths are injectable for tests and future hosting.
    Manager, not SQLite. Configure the model and send-preview toggle.
 5. Optionally enter a Microsoft Graph client ID (and tenant ID) in **設定**, sign in
    with **Microsoftサインイン**, and enable Outlook mail and/or calendar collection.
-6. Select **今週の候補を生成** to run local (and, if enabled, Graph) collection and,
-   after preview approval, generate candidates.
+6. Select **候補を生成…**, pick the target week (今週 or one of the previous
+   7 weeks), to run local (and, if enabled, Graph) collection and, after preview
+   approval, generate candidates.
 7. Review cards, edit fields, inspect evidence, merge duplicates, check the
    **記入状況** coverage bar for empty days, and select rows.
-8. Use **Excel出力** in review to persist changes and export selected rows only.
+8. Use **Excel出力** in review to persist changes and export selected rows only —
+   a blank-weekday warning appears first if any selected weekday has no rows, and
+   a prompt to open the file appears after a successful export.
 9. Open **今週の記録を見る** to browse notes or manually export the four-column
-   Phase 1 report.
+   Phase 1 report (also offers to open the file after export).
 
 The generated file is named
 `業務週報(USA太田) YYYYMMDD-YYYYMMDD.xlsx`.

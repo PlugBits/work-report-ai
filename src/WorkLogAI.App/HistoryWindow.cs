@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
 using WorkLogAI.Core;
+using WorkLogAI.Infrastructure;
 using Button = System.Windows.Controls.Button;
 
 namespace WorkLogAI.App;
@@ -141,15 +142,11 @@ public sealed class HistoryWindow : Window
                 notes.Select(mapper.Map),
                 _settings.ExcelOutputDirectory,
                 new ReportIdentity(_settings.CompanyName, _settings.EmployeeName));
-            MessageBox.Show(
-                this,
-                $"Excelを出力しました。\n{path}",
-                "WorkLog AI",
-                MessageBoxButton.OK,
-                MessageBoxImage.Information);
+            ExportResultPrompt.OfferToOpen(this, path);
         }
         catch (Exception exception)
         {
+            ErrorLog.Log("HistoryWindow.Export", exception);
             MessageBox.Show(
                 this,
                 $"Excelを出力できませんでした。\n{exception.Message}",
