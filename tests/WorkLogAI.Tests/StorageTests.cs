@@ -1,0 +1,209 @@
+using Microsoft.Data.Sqlite;
+using WorkLogAI.Core;
+using WorkLogAI.Infrastructure;
+
+namespace WorkLogAI.Tests;
+
+public sealed class StorageTests
+{
+    [Fact]
+    public async Task Migration_is_idempotent_and_creates_all_four_tables()
+    {
+        using var temporary = new TemporaryDirectory();
+        var path = Path.Combine(temporary.Path, "migration.db");
+        var factory = new SqliteConnectionFactory(new FixedDatabasePathProvider(path));
+        var initializer = new SqliteDatabaseInitializer(factory);
+
+        await initializer.InitializeAsync();
+        await initializer.InitializeAsync();
+
+        await using var connection = factory.Create();
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT name
+            FROM sqlite_master
+            WHERE type = 'table'
+              AND name IN ('quick_notes', 'source_events', 'report_candidates', 'settings')
+            ORDER BY name;
+            """;
+        var tables = new List<string>();
+        await using (var reader = await command.ExecuteReaderAsync())
+        {
+            while (await reader.ReadAsync())
+            {
+                tables.Add(reader.GetString(0));
+            }
+        }
+
+        Assert.Equal(
+            new[] { "quick_notes", "report_candidates", "settings", "source_events" },
+            tables);
+
+        command.CommandText = "PRAGMA user_version;";
+        Assert.Equal(2L, Convert.ToInt64(await command.ExecuteScalarAsync()));
+    }
+
+    [Fact]
+    public async Task Migration_upgrades_a_version_one_candidate_table_to_phase_three()
+    {
+        using var temporary = new TemporaryDirectory();
+        var path = Path.Combine(temporary.Path, "upgrade.db");
+        var factory = new SqliteConnectionFactory(new FixedDatabasePathProvider(path));
+        await using (var connection = factory.Create())
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                CREATE TABLE report_candidates (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    week_start TEXT NOT NULL,
+                    work_date TEXT NOT NULL,
+                    work_item TEXT NOT NULL,
+                    activity TEXT NOT NULL,
+                    result_or_next TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    selected INTEGER NOT NULL,
+                    edited INTEGER NOT NULL,
+                    source_event_ids_json TEXT NOT NULL
+                );
+                PRAGMA user_version = 1;
+                """;
+            await command.ExecuteNonQueryAsync();
+        }
+
+        await new SqliteDatabaseInitializer(factory).InitializeAsync();
+        await new SqliteDatabaseInitializer(factory).InitializeAsync();
+
+        await using var upgraded = factory.Create();
+        await upgraded.OpenAsync();
+        await using var columns = upgraded.CreateCommand();
+        columns.CommandText = "PRAGMA table_info(report_candidates);";
+        var names = new List<string>();
+        await using (var reader = await columns.ExecuteReaderAsync())
+        {
+            while (await reader.ReadAsync()) names.Add(reader.GetString(1));
+        }
+        Assert.Contains("needs_confirmation", names);
+        Assert.Contains("confirmation_question", names);
+        Assert.Contains("origin", names);
+        columns.CommandText = "PRAGMA user_version;";
+        Assert.Equal(2L, Convert.ToInt64(await columns.ExecuteScalarAsync()));
+    }
+
+    [Fact]
+    public async Task Notes_survive_repository_reopen_and_support_soft_delete_and_reopen()
+    {
+        using var temporary = new TemporaryDirectory();
+        var path = Path.Combine(temporary.Path, "notes.db");
+        var provider = new FixedDatabasePathProvider(path);
+        var factory = new SqliteConnectionFactory(provider);
+        await new SqliteDatabaseInitializer(factory).InitializeAsync();
+        var createdAt = new DateTimeOffset(2026, 7, 30, 9, 15, 0, TimeSpan.FromHours(-4));
+
+        var firstRepository = new SqliteQuickNoteRepository(factory);
+        var created = await firstRepository.CreateAsync("inspection complete", createdAt);
+
+        var reopenedRepository = new SqliteQuickNoteRepository(
+            new SqliteConnectionFactory(new FixedDatabasePathProvider(path)));
+        var active = await reopenedRepository.ListAsync(createdAt.AddDays(-1), createdAt.AddDays(1));
+        Assert.Single(active);
+        Assert.Equal(created.Id, active[0].Id);
+        Assert.Equal("inspection complete", active[0].Text);
+
+        Assert.True(await reopenedRepository.SoftDeleteAsync(created.Id, createdAt.AddHours(1)));
+        Assert.Empty(await reopenedRepository.ListAsync(createdAt.AddDays(-1), createdAt.AddDays(1)));
+        var withDeleted = await reopenedRepository.ListAsync(
+            createdAt.AddDays(-1),
+            createdAt.AddDays(1),
+            includeDeleted: true);
+        Assert.NotNull(Assert.Single(withDeleted).DeletedAt);
+
+        Assert.True(await reopenedRepository.ReopenAsync(created.Id));
+        Assert.Null(Assert.Single(await reopenedRepository.ListAsync(
+            createdAt.AddDays(-1),
+            createdAt.AddDays(1))).DeletedAt);
+    }
+
+    [Fact]
+    public async Task Settings_store_round_trips_allowed_values_and_rejects_secret_names()
+    {
+        using var temporary = new TemporaryDirectory();
+        var factory = new SqliteConnectionFactory(
+            new FixedDatabasePathProvider(Path.Combine(temporary.Path, "settings.db")));
+        await new SqliteDatabaseInitializer(factory).InitializeAsync();
+        var store = new SqliteSettingsStore(factory);
+
+        await store.SetAsync("profile.company_name", "YAHATA USA");
+
+        Assert.Equal("YAHATA USA", await store.GetAsync("profile.company_name"));
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => store.SetAsync("openai.api-key", "must-not-be-stored"));
+    }
+
+    [Fact]
+    public async Task App_settings_round_trip_non_secret_collection_paths()
+    {
+        using var temporary = new TemporaryDirectory();
+        var factory = new SqliteConnectionFactory(
+            new FixedDatabasePathProvider(Path.Combine(temporary.Path, "path-settings.db")));
+        await new SqliteDatabaseInitializer(factory).InitializeAsync();
+        var service = new AppSettingsService(new SqliteSettingsStore(factory));
+        var expected = new AppSettingsSnapshot(
+            "YAHATA USA",
+            "太田 貴也",
+            DayOfWeek.Sunday,
+            temporary.Path,
+            [@"C:\repos\one", @"C:\repos\two"],
+            @"C:\codex\sessions",
+            [@"C:\business"],
+            "gpt-compatible-custom",
+            false);
+
+        await service.SaveAsync(expected);
+        var actual = await service.LoadAsync();
+
+        Assert.Equal(expected.LocalRepositoryPaths, actual.LocalRepositoryPaths);
+        Assert.Equal(expected.CodexSessionFolder, actual.CodexSessionFolder);
+        Assert.Equal(expected.RecentFileFolders, actual.RecentFileFolders);
+        Assert.Equal(DayOfWeek.Sunday, actual.WeekStartsOn);
+        Assert.Equal("gpt-compatible-custom", actual.OpenAiModel);
+        Assert.False(actual.SendPreviewEnabled);
+    }
+
+    [Fact]
+    public void Default_database_path_is_injectable_and_sample_mode_is_isolated()
+    {
+        const string root = @"C:\tmp\WorkLogAIPathTest";
+        var production = new DefaultDatabasePathProvider(root).GetDatabasePath();
+        var sample = new DefaultDatabasePathProvider(root, sampleDataMode: true).GetDatabasePath();
+
+        Assert.StartsWith(root, production, StringComparison.OrdinalIgnoreCase);
+        Assert.EndsWith(Path.Combine("Data", "worklog.db"), production);
+        Assert.EndsWith(Path.Combine("SampleData", "worklog-sample.db"), sample);
+        Assert.NotEqual(production, sample);
+    }
+}
+
+internal sealed class TemporaryDirectory : IDisposable
+{
+    public TemporaryDirectory()
+    {
+        Path = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(),
+            "WorkLogAI.Tests",
+            Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path);
+    }
+
+    public string Path { get; }
+
+    public void Dispose()
+    {
+        if (Directory.Exists(Path))
+        {
+            Directory.Delete(Path, recursive: true);
+        }
+    }
+}

@@ -1,0 +1,15 @@
+bin/
+obj/
+.vs/
+.dotnet-home/
+TestResults/
+*.user
+*.suo
+*.db
+*.db-shm
+*.db-wal
+*.xlsx
+publish/
+.env
+appsettings.*.json
+!appsettings.example.json
