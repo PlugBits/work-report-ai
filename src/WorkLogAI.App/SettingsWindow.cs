@@ -325,8 +325,9 @@ public sealed class SettingsWindow : Window
                 _apiKey.Clear();
             }
         }
-        catch
+        catch (Exception exception)
         {
+            ErrorLog.Log("SettingsWindow.Save", exception);
             _apiKey.Clear();
             MessageBox.Show(
                 this,
@@ -352,6 +353,7 @@ public sealed class SettingsWindow : Window
             }
             catch (Exception exception)
             {
+                ErrorLog.Log("SettingsWindow.Save", exception);
                 MessageBox.Show(
                     this,
                     exception.Message,

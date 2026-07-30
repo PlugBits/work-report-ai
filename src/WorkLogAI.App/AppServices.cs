@@ -8,12 +8,13 @@ public sealed class AppServices
 {
     private readonly bool _sampleMode;
     private readonly IDatabaseInitializer _database;
+    private readonly IDatabasePathProvider _pathProvider;
 
     public AppServices(bool sampleMode)
     {
         _sampleMode = sampleMode;
-        var pathProvider = new DefaultDatabasePathProvider(sampleDataMode: sampleMode);
-        var connections = new SqliteConnectionFactory(pathProvider);
+        _pathProvider = new DefaultDatabasePathProvider(sampleDataMode: sampleMode);
+        var connections = new SqliteConnectionFactory(_pathProvider);
         _database = new SqliteDatabaseInitializer(connections);
         Notes = new SqliteQuickNoteRepository(connections);
         SourceEvents = new SqliteSourceEventRepository(connections);
@@ -43,11 +44,24 @@ public sealed class AppServices
 
     public async Task InitializeAsync()
     {
+        if (!_sampleMode)
+        {
+            RunDatabaseBackup();
+        }
         await _database.InitializeAsync();
         if (_sampleMode)
         {
             await new SampleDataSeeder(Notes, SourceEvents, Candidates).SeedIfEmptyAsync();
         }
+    }
+
+    private void RunDatabaseBackup()
+    {
+        var backupsDirectory = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "WorkLog AI",
+            "Backups");
+        new DatabaseBackupService(_pathProvider.GetDatabasePath(), backupsDirectory).RunIfNeeded();
     }
 
     public async Task<CollectionRunResult> CollectLocalSourcesAsync(

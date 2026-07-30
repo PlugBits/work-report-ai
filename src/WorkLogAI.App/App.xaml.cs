@@ -42,6 +42,7 @@ public partial class App : System.Windows.Application
         }
         catch (Exception exception)
         {
+            ErrorLog.Log("App.Startup", exception);
             MessageBox.Show(
                 $"起動に失敗しました。\n{exception.Message}",
                 "WorkLog AI",
@@ -75,7 +76,7 @@ public partial class App : System.Windows.Application
 
         var menu = new Forms.ContextMenuStrip();
         menu.Items.Add("クイック入力", null, (_, _) => ShowQuickCapture());
-        menu.Items.Add("今週の候補を生成", null, async (_, _) => await GenerateCandidatesAsync());
+        menu.Items.Add("候補を生成…", null, async (_, _) => await GenerateCandidatesAsync());
         menu.Items.Add("今週の記録を見る", null, (_, _) => ShowHistory());
         menu.Items.Add("設定", null, (_, _) => ShowSettings());
         menu.Items.Add(new Forms.ToolStripSeparator());
@@ -140,8 +141,9 @@ public partial class App : System.Windows.Application
                 "今日の業務メモがまだ0件です。Ctrl+Alt+W で1行記録しましょう。",
                 Forms.ToolTipIcon.Info);
         }
-        catch
+        catch (Exception exception)
         {
+            ErrorLog.Log("App.ReminderTick", exception);
         }
     }
 
@@ -174,9 +176,17 @@ public partial class App : System.Windows.Application
         try
         {
             var settings = await _services.Settings.LoadAsync();
-            var range = new WeekRangeCalculator(settings.WeekStartsOn)
-                .GetWeekRange(DateOnly.FromDateTime(DateTime.Today));
+            var picker = new WeekPickerWindow(DateOnly.FromDateTime(DateTime.Today), settings.WeekStartsOn);
+            if (picker.ShowDialog() != true || picker.SelectedRange is not { } range)
+            {
+                return;
+            }
+
             var collection = await _services.CollectLocalSourcesAsync(range);
+            if (collection.Errors.Count > 0)
+            {
+                ErrorLog.Log("App.Collection", string.Join("; ", collection.Errors));
+            }
             var preview = await _services.GetGenerationPreviewAsync(range);
             if (!preview.HasCredential)
             {
@@ -236,6 +246,7 @@ public partial class App : System.Windows.Application
         }
         catch (Exception exception)
         {
+            ErrorLog.Log("App.GenerateCandidates", exception);
             MessageBox.Show(
                 $"ローカル収集に失敗しました。\n{exception.Message}",
                 "WorkLog AI",

@@ -244,6 +244,15 @@ host (`dotnet`/`dotnet.exe`) with a Japanese error, since only a published,
 self-contained EXE has a stable path to register; the settings window also disables
 the checkbox entirely under `--sample-data`.
 
+**候補を生成…** now opens `WeekPickerWindow` before running collection instead of
+always targeting the week containing today. The window itself stays dumb: it asks
+the pure Core `WeekOptionBuilder.Build(today, weekStartsOn, 8)` for an ordered list
+of `WeekRange`/`WeekOptionKind` (this-week, last-week, older), attaches only the
+Japanese labels (`今週`/`先週`/no prefix) in the App layer, and defaults the
+selection to 今週. Cancel (Esc or キャンセル) aborts before any collection or
+generation call runs; OK (Enter or OK) flows the chosen `WeekRange` through the
+same `GenerateCandidatesAsync` path used previously for "this week only".
+
 ## Excel contract
 
 ClosedXML writes one worksheet named `業務週報`, a Japanese title and identity row,
@@ -277,6 +286,27 @@ user-approved Responses API call, WorkLog AI now performs three kinds of outboun
 network request, all user-initiated and all excluding source code, diffs, full
 message/event bodies beyond their sanitized/capped reduction, and credentials.
 
-GitHub network APIs, installers, crash recovery, log rotation, and automatic update
-implementation remain absent. Local collectors (Git, Codex, recent-file) still
-perform no network operation of their own.
+GitHub network APIs, installers, and automatic update implementation remain absent.
+Local collectors (Git, Codex, recent-file) still perform no network operation of
+their own.
+
+`ErrorLog` (`WorkLogAI.Infrastructure`, dependency-free, first Phase 5
+operational-quality item) is a best-effort local diagnostic log, not an audit or
+content log: it writes only a caller-supplied context label plus, for exceptions,
+the exception type/message/stack trace, to monthly files under
+`%LOCALAPPDATA%\WorkLog AI\Logs\worklog-YYYYMM.log`. It never receives note bodies,
+candidate text, mail content, or credentials — call sites pass a short label
+(`"CandidateWindow.Export"`) and either an `Exception` or an already-sanitized
+summary string (e.g. collector error text, which is sanitized before it ever
+reaches a `CollectorRunSummary`). Its own I/O is wrapped so logging can never
+throw or surface a new failure, and it deletes its own files past 3 months on
+every write via the pure `FormatLine`/`SelectExpiredLogFiles` helpers.
+
+`DatabaseBackupService` (`WorkLogAI.Infrastructure`, second Phase 5
+operational-quality item) makes a weekly, best-effort file-level copy of the
+production SQLite database to `%LOCALAPPDATA%\WorkLog AI\Backups\worklog-YYYYMMDD.db`,
+keeping the newest 4 backups. `AppServices.InitializeAsync` runs it first, skipped
+entirely under `--sample-data`, and always before `IDatabaseInitializer.InitializeAsync`
+opens the first connection — a plain `File.Copy` is only safe to reason about while
+no connection (and therefore no WAL/journal file) exists yet. All failures are
+caught and sent to `ErrorLog`; a backup problem never blocks startup.

@@ -291,31 +291,87 @@ public sealed class CandidateWindow : Window
 
     private async void SaveAsync(object sender, RoutedEventArgs e)
     {
-        if (await PersistAsync())
+        try
         {
-            MessageBox.Show(this, "レビュー内容を保存しました。", "WorkLog AI");
+            if (await PersistAsync())
+            {
+                MessageBox.Show(this, "レビュー内容を保存しました。", "WorkLog AI");
+            }
+        }
+        catch (Exception exception)
+        {
+            ErrorLog.Log("CandidateWindow.Save", exception);
+            MessageBox.Show(
+                this,
+                $"保存できませんでした。\n{exception.Message}",
+                "WorkLog AI",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
         }
     }
 
     private async void ExportAsync(object sender, RoutedEventArgs e)
     {
-        if (!await PersistAsync() || !TryBuildCandidates(out var candidates))
+        try
         {
-            return;
+            if (!await PersistAsync() || !TryBuildCandidates(out var candidates))
+            {
+                return;
+            }
+            var rows = new CandidateReportMapper().MapSelected(candidates);
+            if (rows.Count == 0)
+            {
+                MessageBox.Show(this, "採用された候補がありません。", "WorkLog AI");
+                return;
+            }
+            if (!ConfirmBlankWeekdays())
+            {
+                return;
+            }
+
+            var settings = await _services.Settings.LoadAsync();
+            var path = await _services.Exporter.ExportAsync(
+                _range,
+                rows,
+                settings.ExcelOutputDirectory,
+                new ReportIdentity(settings.CompanyName, settings.EmployeeName));
+            ExportResultPrompt.OfferToOpen(this, path);
         }
-        var rows = new CandidateReportMapper().MapSelected(candidates);
-        if (rows.Count == 0)
+        catch (Exception exception)
         {
-            MessageBox.Show(this, "採用された候補がありません。", "WorkLog AI");
-            return;
+            ErrorLog.Log("CandidateWindow.Export", exception);
+            MessageBox.Show(
+                this,
+                $"Excelを出力できませんでした。\n{exception.Message}",
+                "WorkLog AI",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
         }
-        var settings = await _services.Settings.LoadAsync();
-        var path = await _services.Exporter.ExportAsync(
-            _range,
-            rows,
-            settings.ExcelOutputDirectory,
-            new ReportIdentity(settings.CompanyName, settings.EmployeeName));
-        MessageBox.Show(this, $"Excelを出力しました。\n{path}", "WorkLog AI");
+    }
+
+    private bool ConfirmBlankWeekdays()
+    {
+        var selectedDates = _items
+            .Where(item => item.Selected)
+            .Select(item => DateOnly.TryParse(item.WorkDateText, out var date) ? (DateOnly?)date : null)
+            .Where(date => date.HasValue)
+            .Select(date => date!.Value);
+        var blankWeekdays = WeekCoverageCalculator.Calculate(_range, selectedDates)
+            .Where(day => day.IsWeekday && !day.HasCandidates)
+            .ToList();
+        if (blankWeekdays.Count == 0)
+        {
+            return true;
+        }
+
+        var days = string.Join(", ", blankWeekdays.Select(day => JapaneseDayOfWeek(day.DayOfWeek)));
+        var answer = MessageBox.Show(
+            this,
+            $"空白の平日があります: {days}\nこのままExcelを出力しますか？",
+            "WorkLog AI",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+        return answer == MessageBoxResult.Yes;
     }
 
     private async Task<bool> PersistAsync()

@@ -86,6 +86,19 @@
       an HKCU Run key entry
 - [x] Auto-start registration requires the published EXE — the dotnet host is
       rejected with a Japanese error — and is disabled in `--sample-data` mode
+- [x] **候補を生成…** opens a week picker (今週 plus the previous 7 weeks) built
+      from the pure `WeekOptionBuilder`; cancel aborts without running collection
+- [x] Weekly review Excel export warns (Yes/No) when a selected weekday has zero
+      selected rows, listing the blank days; weekends never warn
+- [x] Both Excel export flows offer to open the generated file (Yes/No) after a
+      successful export
+- [x] Best-effort local error log (`ErrorLog`, Phase 5 operational-quality item)
+      under `%LOCALAPPDATA%\WorkLog AI\Logs`, monthly files, 3-month retention,
+      context/exception only — never note bodies, candidate text, or secrets
+- [x] Weekly best-effort SQLite file backup (`DatabaseBackupService`, Phase 5
+      operational-quality item) under `%LOCALAPPDATA%\WorkLog AI\Backups`, run at
+      startup before any DB connection opens, skipped in `--sample-data`, newest
+      4 backups retained
 
 ## Phase 4 — Microsoft Graph mail and calendar
 
@@ -129,9 +142,10 @@ Teams, OneDrive, or additional mailboxes).
 
 ## Explicitly not implemented after Phase 4
 
-- [ ] Phase 5: installer, crash recovery, log rotation, and automatic updates
+- [ ] Phase 5: installer, crash recovery, and automatic updates
 
-Auto-start, the one Phase 5 item that overlaps with usability work, is already
+Auto-start, the local error log, and the weekly database backup — the Phase 5
+operational-quality items that overlap with usability work — are already
 implemented above. There are no GitHub network calls, installer, or auto-update
 code. The secret stores are Windows Credential Manager (OpenAI API key only) and
 the DPAPI-encrypted MSAL token cache file (Microsoft Graph tokens only). The only

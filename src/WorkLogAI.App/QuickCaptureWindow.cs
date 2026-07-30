@@ -4,6 +4,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 using WorkLogAI.Core;
+using WorkLogAI.Infrastructure;
 using KeyEventArgs = System.Windows.Input.KeyEventArgs;
 using TextBox = System.Windows.Controls.TextBox;
 
@@ -93,6 +94,7 @@ public sealed class QuickCaptureWindow : Window
         }
         catch (Exception exception)
         {
+            ErrorLog.Log("QuickCaptureWindow.Save", exception);
             MessageBox.Show(
                 this,
                 $"保存できませんでした。\n{exception.Message}",
