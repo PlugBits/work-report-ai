@@ -18,6 +18,11 @@ public sealed class CandidateWindow : Window
     private readonly AppServices _services;
     private readonly WeekRange _range;
     private readonly StackPanel _cards = new();
+    private readonly StackPanel _coverageBar = new()
+    {
+        Orientation = Orientation.Horizontal,
+        Margin = new Thickness(0, 0, 0, 10)
+    };
     private List<CandidateEditor> _items = [];
     private bool _lowConfidenceOnly;
 
@@ -51,6 +56,9 @@ public sealed class CandidateWindow : Window
         actions.Children.Add(ActionButton("Excel出力", ExportAsync));
         DockPanel.SetDock(actions, Dock.Top);
         root.Children.Add(actions);
+
+        DockPanel.SetDock(_coverageBar, Dock.Top);
+        root.Children.Add(_coverageBar);
 
         var scroll = new ScrollViewer
         {
@@ -91,7 +99,82 @@ public sealed class CandidateWindow : Window
                 Margin = new Thickness(8)
             });
         }
+        RenderCoverageBar();
     }
+
+    private void RenderCoverageBar()
+    {
+        _coverageBar.Children.Clear();
+        _coverageBar.Children.Add(new TextBlock
+        {
+            Text = "記入状況:",
+            FontWeight = FontWeights.SemiBold,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 8, 0)
+        });
+
+        var candidateDates = _items
+            .Select(item => DateOnly.TryParse(item.WorkDateText, out var date) ? (DateOnly?)date : null)
+            .Where(date => date.HasValue)
+            .Select(date => date!.Value);
+        var coverage = WeekCoverageCalculator.Calculate(_range, candidateDates);
+        foreach (var day in coverage)
+        {
+            _coverageBar.Children.Add(CreateCoverageDayElement(day));
+        }
+    }
+
+    private FrameworkElement CreateCoverageDayElement(DayCoverage day)
+    {
+        var label = new TextBlock
+        {
+            Text = $"{JapaneseDayOfWeek(day.DayOfWeek)} {day.Date:M/d}\n{day.CandidateCount}件",
+            TextAlignment = TextAlignment.Center
+        };
+
+        if (day.HasCandidates)
+        {
+            return new Border
+            {
+                Background = Brushes.WhiteSmoke,
+                BorderBrush = Brushes.LightGray,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(4),
+                Padding = new Thickness(8, 4, 8, 4),
+                Margin = new Thickness(0, 0, 6, 0),
+                Child = label
+            };
+        }
+
+        var button = new Button
+        {
+            Content = label,
+            Padding = new Thickness(8, 4, 8, 4),
+            Margin = new Thickness(0, 0, 6, 0),
+            Background = day.IsWeekday
+                ? new SolidColorBrush(Color.FromRgb(0xFF, 0xCD, 0xD2))
+                : new SolidColorBrush(Color.FromRgb(0xFF, 0xF3, 0xE0)),
+            BorderBrush = day.IsWeekday ? Brushes.IndianRed : Brushes.SandyBrown,
+            Foreground = Brushes.Black,
+            ToolTip = day.IsWeekday
+                ? "この日の候補がありません。クリックして手動で追加できます。"
+                : "この日の候補はありません（週末）。クリックして手動で追加できます。"
+        };
+        button.Click += (_, _) => _ = AddManualRowAsync(day.Date);
+        return button;
+    }
+
+    private static string JapaneseDayOfWeek(DayOfWeek dayOfWeek) => dayOfWeek switch
+    {
+        DayOfWeek.Monday => "月",
+        DayOfWeek.Tuesday => "火",
+        DayOfWeek.Wednesday => "水",
+        DayOfWeek.Thursday => "木",
+        DayOfWeek.Friday => "金",
+        DayOfWeek.Saturday => "土",
+        DayOfWeek.Sunday => "日",
+        _ => "?"
+    };
 
     private static Border CreateCard(CandidateEditor item)
     {
@@ -168,10 +251,12 @@ public sealed class CandidateWindow : Window
         RenderCards();
     }
 
-    private async void AddManualRowAsync(object sender, RoutedEventArgs e)
+    private async void AddManualRowAsync(object sender, RoutedEventArgs e) => await AddManualRowAsync((DateOnly?)null);
+
+    private async Task AddManualRowAsync(DateOnly? presetDate)
     {
         var today = DateOnly.FromDateTime(DateTime.Today);
-        var workDate = _range.Contains(today) ? today : _range.End;
+        var workDate = presetDate ?? (_range.Contains(today) ? today : _range.End);
         var localTime = workDate.ToDateTime(new TimeOnly(12, 0), DateTimeKind.Unspecified);
         var occurredAt = new DateTimeOffset(localTime, TimeZoneInfo.Local.GetUtcOffset(localTime));
         var sourceEvent = SourceEventFactory.Create(
