@@ -193,7 +193,7 @@ public sealed class LocalGitCollector(
         var added = 0;
         var deleted = 0;
         foreach (var line in result.StandardOutput.Split(
-                     ['\r', '\n'],
+                     new[] { '\r', '\n' },
                      StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
             var fields = line.Split('\t');

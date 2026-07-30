@@ -173,6 +173,99 @@ public sealed class StorageTests
     }
 
     [Fact]
+    public async Task Reminder_preferences_round_trip()
+    {
+        using var temporary = new TemporaryDirectory();
+        var factory = new SqliteConnectionFactory(
+            new FixedDatabasePathProvider(Path.Combine(temporary.Path, "reminder-settings.db")));
+        await new SqliteDatabaseInitializer(factory).InitializeAsync();
+        var service = new AppSettingsService(new SqliteSettingsStore(factory));
+        var expected = new AppSettingsSnapshot(
+            "YAHATA USA",
+            "太田 貴也",
+            DayOfWeek.Monday,
+            temporary.Path,
+            ReminderEnabled: false,
+            ConfiguredReminderTime: new TimeOnly(9, 30));
+
+        await service.SaveAsync(expected);
+        var actual = await service.LoadAsync();
+
+        Assert.False(actual.ReminderEnabled);
+        Assert.Equal(new TimeOnly(9, 30), actual.ReminderTime);
+    }
+
+    [Fact]
+    public async Task Reminder_time_defaults_to_seventeen_hundred_when_unset_or_invalid()
+    {
+        using var temporary = new TemporaryDirectory();
+        var factory = new SqliteConnectionFactory(
+            new FixedDatabasePathProvider(Path.Combine(temporary.Path, "reminder-default.db")));
+        await new SqliteDatabaseInitializer(factory).InitializeAsync();
+        var store = new SqliteSettingsStore(factory);
+        var service = new AppSettingsService(store);
+
+        var unset = await service.LoadAsync();
+        Assert.Equal(new TimeOnly(17, 0), unset.ReminderTime);
+        Assert.True(unset.ReminderEnabled);
+
+        await store.SetAsync(AppSettingKeys.ReminderTime, "not-a-time");
+        var invalid = await service.LoadAsync();
+        Assert.Equal(new TimeOnly(17, 0), invalid.ReminderTime);
+    }
+
+    [Fact]
+    public async Task Graph_settings_round_trip_and_default_to_disabled_common_tenant()
+    {
+        using var temporary = new TemporaryDirectory();
+        var factory = new SqliteConnectionFactory(
+            new FixedDatabasePathProvider(Path.Combine(temporary.Path, "graph-settings.db")));
+        await new SqliteDatabaseInitializer(factory).InitializeAsync();
+        var service = new AppSettingsService(new SqliteSettingsStore(factory));
+
+        var unset = await service.LoadAsync();
+        Assert.Equal(string.Empty, unset.GraphClientId);
+        Assert.Equal("common", unset.GraphTenantId);
+        Assert.False(unset.GraphMailEnabled);
+        Assert.False(unset.GraphCalendarEnabled);
+
+        var expected = new AppSettingsSnapshot(
+            "YAHATA USA",
+            "太田 貴也",
+            DayOfWeek.Monday,
+            temporary.Path,
+            GraphClientId: "11111111-2222-3333-4444-555555555555",
+            GraphTenantId: "contoso.onmicrosoft.com",
+            GraphMailEnabled: true,
+            GraphCalendarEnabled: true);
+
+        await service.SaveAsync(expected);
+        var actual = await service.LoadAsync();
+
+        Assert.Equal(expected.GraphClientId, actual.GraphClientId);
+        Assert.Equal(expected.GraphTenantId, actual.GraphTenantId);
+        Assert.True(actual.GraphMailEnabled);
+        Assert.True(actual.GraphCalendarEnabled);
+    }
+
+    [Fact]
+    public async Task Graph_setting_keys_are_not_treated_as_secrets()
+    {
+        using var temporary = new TemporaryDirectory();
+        var factory = new SqliteConnectionFactory(
+            new FixedDatabasePathProvider(Path.Combine(temporary.Path, "graph-key-policy.db")));
+        await new SqliteDatabaseInitializer(factory).InitializeAsync();
+        var store = new SqliteSettingsStore(factory);
+
+        await store.SetAsync(AppSettingKeys.GraphClientId, "11111111-2222-3333-4444-555555555555");
+        await store.SetAsync(AppSettingKeys.GraphTenantId, "common");
+        await store.SetAsync(AppSettingKeys.GraphMailEnabled, "true");
+        await store.SetAsync(AppSettingKeys.GraphCalendarEnabled, "false");
+
+        Assert.Equal("common", await store.GetAsync(AppSettingKeys.GraphTenantId));
+    }
+
+    [Fact]
     public void Default_database_path_is_injectable_and_sample_mode_is_isolated()
     {
         const string root = @"C:\tmp\WorkLogAIPathTest";

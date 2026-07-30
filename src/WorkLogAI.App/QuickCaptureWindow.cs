@@ -20,7 +20,7 @@ public sealed class QuickCaptureWindow : Window
         _notes = notes;
         Title = "WorkLog AI";
         Width = 620;
-        Height = 58;
+        SizeToContent = SizeToContent.Height;
         ResizeMode = ResizeMode.NoResize;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         ShowInTaskbar = false;
@@ -29,6 +29,8 @@ public sealed class QuickCaptureWindow : Window
         _input = new TextBox
         {
             FontSize = 18,
+            MinHeight = 40,
+            Padding = new Thickness(8, 6, 8, 6),
             Margin = new Thickness(8),
             VerticalContentAlignment = VerticalAlignment.Center,
             AcceptsReturn = false,
@@ -131,8 +133,18 @@ internal sealed class SaveToast : Window
             }
         };
 
-        Left = relativeTo.Left + (relativeTo.Width - Width) / 2;
-        Top = relativeTo.Top + relativeTo.Height + 6;
+        var relativeWidth = relativeTo.ActualWidth;
+        var relativeHeight = relativeTo.ActualHeight;
+        if (relativeWidth is <= 0 or double.NaN || relativeHeight is <= 0 or double.NaN)
+        {
+            var workArea = SystemParameters.WorkArea;
+            Left = workArea.Left + (workArea.Width - Width) / 2;
+            Top = workArea.Top + (workArea.Height - Height) / 2;
+            return;
+        }
+
+        Left = relativeTo.Left + (relativeWidth - Width) / 2;
+        Top = relativeTo.Top + relativeHeight + 6;
     }
 
     public static void ShowFor(Window relativeTo, TimeSpan duration)

@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using WorkLogAI.Core;
+using WorkLogAI.Infrastructure;
 using Button = System.Windows.Controls.Button;
 using ComboBox = System.Windows.Controls.ComboBox;
 using CheckBox = System.Windows.Controls.CheckBox;
@@ -12,6 +13,8 @@ public sealed class SettingsWindow : Window
 {
     private readonly AppSettingsService _settings;
     private readonly ICredentialStore _credentials;
+    private readonly IStartupRegistrar _startupRegistrar;
+    private readonly bool _sampleMode;
     private readonly TextBox _company = new();
     private readonly TextBox _employee = new();
     private readonly ComboBox _weekStart = new();
@@ -24,21 +27,40 @@ public sealed class SettingsWindow : Window
     private readonly PasswordBox _apiKey = new();
     private readonly CheckBox _removeApiKey = new() { Content = "保存済みAPIキーを削除" };
     private readonly TextBlock _credentialStatus = new();
+    private readonly CheckBox _reminderEnabled = new() { Content = "平日夕方にメモ0件をリマインド" };
+    private readonly TextBox _reminderTime = new();
+    private readonly CheckBox _autoStart = new() { Content = "Windowsログイン時に自動起動する" };
+    private readonly TextBox _graphClientId = new();
+    private readonly TextBox _graphTenantId = new();
+    private readonly CheckBox _graphMailEnabled = new() { Content = "送信済みメールを収集" };
+    private readonly CheckBox _graphCalendarEnabled = new() { Content = "カレンダーを収集" };
+    private readonly Button _graphSignIn = new() { Content = "Microsoftサインイン", Padding = new Thickness(10, 4, 10, 4) };
+    private readonly Button _graphSignOut = new() { Content = "サインアウト", Padding = new Thickness(10, 4, 10, 4), Margin = new Thickness(8, 0, 0, 0) };
+    private readonly TextBlock _graphStatus = new() { Text = "未サインイン", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 0, 6) };
+    private readonly Func<string, string, GraphAuthService> _graphAuthFactory;
 
-    public SettingsWindow(AppSettingsService settings, ICredentialStore credentials)
+    public SettingsWindow(
+        AppSettingsService settings,
+        ICredentialStore credentials,
+        IStartupRegistrar startupRegistrar,
+        Func<string, string, GraphAuthService> graphAuthFactory,
+        bool sampleMode = false)
     {
         _settings = settings;
         _credentials = credentials;
+        _startupRegistrar = startupRegistrar;
+        _graphAuthFactory = graphAuthFactory;
+        _sampleMode = sampleMode;
         Title = "設定 - WorkLog AI";
         Width = 560;
-        Height = 760;
+        Height = 980;
         ResizeMode = ResizeMode.NoResize;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
 
         var grid = new Grid { Margin = new Thickness(16) };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
         grid.ColumnDefinitions.Add(new ColumnDefinition());
-        for (var i = 0; i < 14; i++)
+        for (var i = 0; i < 22; i++)
         {
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         }
@@ -75,6 +97,29 @@ public sealed class SettingsWindow : Window
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(4, 8, 4, 8)
         });
+        AddRow(grid, 14, "メモ0件リマインド", _reminderEnabled);
+        AddRow(grid, 15, "リマインド時刻(HH:mm)", _reminderTime);
+        _autoStart.IsEnabled = !_sampleMode;
+        AddRow(grid, 16, "自動起動", _autoStart);
+        AddRow(grid, 17, "クライアントID", _graphClientId);
+        AddRow(grid, 18, "テナントID", _graphTenantId);
+        AddRow(grid, 19, "Outlookメール", _graphMailEnabled);
+        AddRow(grid, 20, "Outlookカレンダー", _graphCalendarEnabled);
+        _graphSignIn.Click += GraphSignInAsync;
+        _graphSignOut.Click += GraphSignOutAsync;
+        _graphClientId.TextChanged += (_, _) => UpdateGraphSignInEnabled();
+        AddRow(grid, 21, "Microsoftサインイン", new StackPanel
+        {
+            Children =
+            {
+                _graphStatus,
+                new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    Children = { _graphSignIn, _graphSignOut }
+                }
+            }
+        });
 
         var buttons = new StackPanel
         {
@@ -93,7 +138,7 @@ public sealed class SettingsWindow : Window
         };
         buttons.Children.Add(save);
         buttons.Children.Add(cancel);
-        Grid.SetRow(buttons, 14);
+        Grid.SetRow(buttons, 22);
         Grid.SetColumnSpan(buttons, 2);
 
         grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -135,6 +180,8 @@ public sealed class SettingsWindow : Window
         _recentFolders.Text = string.Join(Environment.NewLine, values.RecentFileFolders);
         _model.Text = values.OpenAiModel;
         _preview.IsChecked = values.SendPreviewEnabled;
+        _reminderEnabled.IsChecked = values.ReminderEnabled;
+        _reminderTime.Text = values.ReminderTime.ToString("HH:mm");
         try
         {
             _credentialStatus.Text = string.IsNullOrWhiteSpace(
@@ -146,6 +193,90 @@ public sealed class SettingsWindow : Window
         {
             _credentialStatus.Text = "Credential Managerを利用できません";
         }
+
+        try
+        {
+            _autoStart.IsChecked = _startupRegistrar.IsEnabled();
+        }
+        catch
+        {
+            _autoStart.IsChecked = false;
+        }
+        _autoStart.IsEnabled = !_sampleMode;
+
+        _graphClientId.Text = values.GraphClientId;
+        _graphTenantId.Text = values.GraphTenantId;
+        _graphMailEnabled.IsChecked = values.GraphMailEnabled;
+        _graphCalendarEnabled.IsChecked = values.GraphCalendarEnabled;
+        UpdateGraphSignInEnabled();
+        await RefreshGraphStatusAsync();
+    }
+
+    private void UpdateGraphSignInEnabled()
+    {
+        _graphSignIn.IsEnabled = !string.IsNullOrWhiteSpace(_graphClientId.Text);
+    }
+
+    private async Task RefreshGraphStatusAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_graphClientId.Text))
+        {
+            _graphStatus.Text = "未サインイン";
+            return;
+        }
+
+        try
+        {
+            var auth = _graphAuthFactory(_graphClientId.Text.Trim(), _graphTenantId.Text.Trim());
+            var user = await auth.GetSignedInUserAsync();
+            _graphStatus.Text = string.IsNullOrWhiteSpace(user)
+                ? "未サインイン"
+                : $"サインイン中: {user}";
+        }
+        catch
+        {
+            _graphStatus.Text = "未サインイン";
+        }
+    }
+
+    private async void GraphSignInAsync(object sender, RoutedEventArgs e)
+    {
+        if (string.IsNullOrWhiteSpace(_graphClientId.Text))
+        {
+            return;
+        }
+
+        _graphSignIn.IsEnabled = false;
+        try
+        {
+            var auth = _graphAuthFactory(_graphClientId.Text.Trim(), _graphTenantId.Text.Trim());
+            var user = await auth.SignInAsync();
+            _graphStatus.Text = string.IsNullOrWhiteSpace(user)
+                ? "未サインイン"
+                : $"サインイン中: {user}";
+        }
+        catch (Exception exception)
+        {
+            _graphStatus.Text = $"サインインに失敗しました: {exception.Message}";
+        }
+        finally
+        {
+            UpdateGraphSignInEnabled();
+        }
+    }
+
+    private async void GraphSignOutAsync(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var auth = _graphAuthFactory(_graphClientId.Text.Trim(), _graphTenantId.Text.Trim());
+            await auth.SignOutAsync();
+        }
+        catch
+        {
+            // Best-effort sign-out; fall through to reset the displayed status.
+        }
+        _graphStatus.Text = "未サインイン";
     }
 
     private async void SaveAsync(object sender, RoutedEventArgs e)
@@ -160,6 +291,12 @@ public sealed class SettingsWindow : Window
             return;
         }
 
+        if (!TimeOnly.TryParseExact(_reminderTime.Text.Trim(), "HH:mm", out var reminderTime))
+        {
+            MessageBox.Show(this, "リマインド時刻はHH:mm形式で入力してください。", "WorkLog AI");
+            return;
+        }
+
         try
         {
             await _settings.SaveAsync(new AppSettingsSnapshot(
@@ -171,7 +308,13 @@ public sealed class SettingsWindow : Window
                 string.IsNullOrWhiteSpace(_codexFolder.Text) ? null : _codexFolder.Text.Trim(),
                 ParsePaths(_recentFolders.Text),
                 _model.Text.Trim(),
-                _preview.IsChecked == true));
+                _preview.IsChecked == true,
+                _reminderEnabled.IsChecked == true,
+                reminderTime,
+                _graphClientId.Text.Trim(),
+                string.IsNullOrWhiteSpace(_graphTenantId.Text) ? "common" : _graphTenantId.Text.Trim(),
+                _graphMailEnabled.IsChecked == true,
+                _graphCalendarEnabled.IsChecked == true));
             if (_removeApiKey.IsChecked == true)
             {
                 await _credentials.DeleteAsync(CredentialTargets.OpenAiApiKey);
@@ -193,6 +336,32 @@ public sealed class SettingsWindow : Window
                 MessageBoxImage.Error);
             return;
         }
+
+        if (!_sampleMode)
+        {
+            try
+            {
+                if (_autoStart.IsChecked == true)
+                {
+                    _startupRegistrar.Enable();
+                }
+                else
+                {
+                    _startupRegistrar.Disable();
+                }
+            }
+            catch (Exception exception)
+            {
+                MessageBox.Show(
+                    this,
+                    exception.Message,
+                    "WorkLog AI",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+                return;
+            }
+        }
+
         DialogResult = true;
     }
 
@@ -204,7 +373,7 @@ public sealed class SettingsWindow : Window
     };
 
     private static IReadOnlyList<string> ParsePaths(string value) =>
-        value.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        value.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 }

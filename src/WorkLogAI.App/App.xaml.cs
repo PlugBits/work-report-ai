@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Threading;
 using Forms = System.Windows.Forms;
 using WorkLogAI.Core;
 using WorkLogAI.Infrastructure;
@@ -10,7 +11,9 @@ public partial class App : System.Windows.Application
     private Forms.NotifyIcon? _trayIcon;
     private GlobalHotKey? _hotKey;
     private AppServices? _services;
+    private DispatcherTimer? _reminderTimer;
     private int _collectionRunning;
+    private bool _sampleMode;
 
     protected override async void OnStartup(StartupEventArgs e)
     {
@@ -19,11 +22,11 @@ public partial class App : System.Windows.Application
 
         try
         {
-            var sampleMode = e.Args.Any(
+            _sampleMode = e.Args.Any(
                 value => string.Equals(value, "--sample-data", StringComparison.OrdinalIgnoreCase));
-            _services = new AppServices(sampleMode);
+            _services = new AppServices(_sampleMode);
             await _services.InitializeAsync();
-            CreateTrayIcon(sampleMode);
+            CreateTrayIcon(_sampleMode);
             _hotKey = new GlobalHotKey(ShowQuickCapture);
 
             if (!_hotKey.Register())
@@ -34,6 +37,8 @@ public partial class App : System.Windows.Application
                     MessageBoxButton.OK,
                     MessageBoxImage.Warning);
             }
+
+            StartReminderTimer();
         }
         catch (Exception exception)
         {
@@ -48,6 +53,7 @@ public partial class App : System.Windows.Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        _reminderTimer?.Stop();
         _hotKey?.Dispose();
         if (_trayIcon is not null)
         {
@@ -76,6 +82,67 @@ public partial class App : System.Windows.Application
         menu.Items.Add("終了", null, (_, _) => Shutdown());
         _trayIcon.ContextMenuStrip = menu;
         _trayIcon.DoubleClick += (_, _) => ShowQuickCapture();
+        _trayIcon.BalloonTipClicked += (_, _) => ShowQuickCapture();
+    }
+
+    private void StartReminderTimer()
+    {
+        _reminderTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(60)
+        };
+        _reminderTimer.Tick += async (_, _) => await CheckReminderAsync();
+        _reminderTimer.Start();
+    }
+
+    private async Task CheckReminderAsync()
+    {
+        if (_services is null || _trayIcon is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var settings = await _services.Settings.LoadAsync();
+            var lastShownValue = await _services.SettingsStore.GetAsync(
+                AppSettingKeys.ReminderLastShownDate);
+            var lastShown = DateOnly.TryParseExact(lastShownValue, "yyyy-MM-dd", out var parsed)
+                ? parsed
+                : (DateOnly?)null;
+
+            var now = DateTime.Now;
+            var todayStart = DateTime.Today;
+            var tomorrowStart = todayStart.AddDays(1);
+            var notes = await _services.Notes.ListAsync(
+                new DateTimeOffset(todayStart),
+                new DateTimeOffset(tomorrowStart));
+
+            var shouldRemind = ReminderPlanner.ShouldRemind(new ReminderPlanInput(
+                settings.ReminderEnabled,
+                settings.ReminderTime,
+                now,
+                notes.Count,
+                lastShown));
+
+            if (!shouldRemind)
+            {
+                return;
+            }
+
+            await _services.SettingsStore.SetAsync(
+                AppSettingKeys.ReminderLastShownDate,
+                DateOnly.FromDateTime(now).ToString("yyyy-MM-dd"));
+
+            _trayIcon.ShowBalloonTip(
+                10000,
+                "WorkLog AI",
+                "今日の業務メモがまだ0件です。Ctrl+Alt+W で1行記録しましょう。",
+                Forms.ToolTipIcon.Info);
+        }
+        catch
+        {
+        }
     }
 
     private void ShowQuickCapture()
@@ -198,6 +265,11 @@ public partial class App : System.Windows.Application
             return;
         }
 
-        new SettingsWindow(_services.Settings, _services.Credentials).ShowDialog();
+        new SettingsWindow(
+            _services.Settings,
+            _services.Credentials,
+            _services.StartupRegistrar,
+            _services.CreateGraphAuth,
+            _sampleMode).ShowDialog();
     }
 }

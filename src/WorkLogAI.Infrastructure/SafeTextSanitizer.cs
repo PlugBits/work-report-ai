@@ -17,7 +17,7 @@ public static partial class SafeTextSanitizer
         redacted = OpenAiStyleToken().Replace(redacted, "[REDACTED]");
 
         var safeLines = redacted
-            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Where(line => !EnvironmentAssignment().IsMatch(line))
             .Where(line => !SourceCodeLine().IsMatch(line))
             .Select(line => line.Length > 500 ? line[..500] : line);

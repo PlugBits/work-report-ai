@@ -98,6 +98,11 @@ public static class CredentialTargets
     public const string OpenAiApiKey = "WorkLog AI/OpenAI API Key";
 }
 
+public interface IGraphTokenProvider
+{
+    Task<string?> GetAccessTokenAsync(CancellationToken cancellationToken = default);
+}
+
 public interface IWeeklyReportExporter
 {
     string CreateFileName(WeekRange range);
@@ -108,6 +113,15 @@ public interface IWeeklyReportExporter
         string outputDirectory,
         ReportIdentity identity,
         CancellationToken cancellationToken = default);
+}
+
+public interface IStartupRegistrar
+{
+    bool IsEnabled();
+
+    void Enable();
+
+    void Disable();
 }
 
 public sealed record ReportIdentity(string CompanyName, string EmployeeName)

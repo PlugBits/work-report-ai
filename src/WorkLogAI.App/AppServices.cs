@@ -18,9 +18,11 @@ public sealed class AppServices
         Notes = new SqliteQuickNoteRepository(connections);
         SourceEvents = new SqliteSourceEventRepository(connections);
         Candidates = new SqliteReportCandidateRepository(connections);
-        Settings = new AppSettingsService(new SqliteSettingsStore(connections));
+        SettingsStore = new SqliteSettingsStore(connections);
+        Settings = new AppSettingsService(SettingsStore);
         Exporter = new ClosedXmlWeeklyReportExporter();
         Credentials = new WindowsCredentialStore();
+        StartupRegistrar = new WindowsStartupRegistrar();
     }
 
     public IQuickNoteRepository Notes { get; }
@@ -34,6 +36,10 @@ public sealed class AppServices
     public IWeeklyReportExporter Exporter { get; }
 
     public ICredentialStore Credentials { get; }
+
+    public IStartupRegistrar StartupRegistrar { get; }
+
+    public ISettingsStore SettingsStore { get; }
 
     public async Task InitializeAsync()
     {
@@ -49,25 +55,54 @@ public sealed class AppServices
         CancellationToken cancellationToken = default)
     {
         var settings = await Settings.LoadAsync(cancellationToken);
-        ISourceCollector[] collectors =
-        [
+        var collectors = new List<ISourceCollector>
+        {
             new ManualQuickNoteCollector(Notes),
             new LocalGitCollector(settings.LocalRepositoryPaths, new BoundedProcessRunner()),
             new CodexSessionCollector(settings.CodexSessionFolder, new CodexSessionParser()),
             new RecentFileCollector(settings.RecentFileFolders)
-        ];
-        var coordinator = new LocalCollectionCoordinator(
-            collectors,
-            SourceEvents,
-            Candidates,
-            new LocalSourceEventMapper());
-        // Collectors intentionally perform bounded synchronous filesystem/process
-        // parsing in places. Run the complete coordinator away from the WPF
-        // dispatcher so a large configured folder cannot block the tray UI.
-        return await Task.Run(
-            () => coordinator.RunAsync(range, cancellationToken),
-            cancellationToken);
+        };
+
+        HttpClient? graphHttpClient = null;
+        try
+        {
+            if (settings.GraphMailEnabled || settings.GraphCalendarEnabled)
+            {
+                graphHttpClient = new HttpClient();
+                var auth = CreateGraphAuth(settings);
+                if (settings.GraphMailEnabled)
+                {
+                    collectors.Add(new OutlookSentMailCollector(auth, graphHttpClient, enabled: true));
+                }
+                if (settings.GraphCalendarEnabled)
+                {
+                    collectors.Add(new OutlookCalendarCollector(auth, graphHttpClient, enabled: true));
+                }
+            }
+
+            var coordinator = new LocalCollectionCoordinator(
+                collectors,
+                SourceEvents,
+                Candidates,
+                new LocalSourceEventMapper());
+            // Collectors intentionally perform bounded synchronous filesystem/process
+            // parsing in places. Run the complete coordinator away from the WPF
+            // dispatcher so a large configured folder cannot block the tray UI.
+            return await Task.Run(
+                () => coordinator.RunAsync(range, cancellationToken),
+                cancellationToken);
+        }
+        finally
+        {
+            graphHttpClient?.Dispose();
+        }
     }
+
+    public GraphAuthService CreateGraphAuth(AppSettingsSnapshot settings) =>
+        CreateGraphAuth(settings.GraphClientId, settings.GraphTenantId);
+
+    public GraphAuthService CreateGraphAuth(string clientId, string tenantId) =>
+        new(clientId, tenantId, _sampleMode);
 
     public async Task<GenerationPreview> GetGenerationPreviewAsync(
         WeekRange range,

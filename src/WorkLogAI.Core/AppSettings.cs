@@ -12,6 +12,13 @@ public static class AppSettingKeys
     public const string RecentFileFolders = "collection.recent_file_folders";
     public const string OpenAiModel = "ai.openai_model";
     public const string SendPreviewEnabled = "ai.send_preview_enabled";
+    public const string ReminderEnabled = "reminder.enabled";
+    public const string ReminderTime = "reminder.time";
+    public const string ReminderLastShownDate = "reminder.last_shown_date";
+    public const string GraphClientId = "graph.client_id";
+    public const string GraphTenantId = "graph.tenant_id";
+    public const string GraphMailEnabled = "graph.mail_enabled";
+    public const string GraphCalendarEnabled = "graph.calendar_enabled";
 }
 
 public sealed class AppSettingsService(ISettingsStore store)
@@ -33,10 +40,22 @@ public sealed class AppSettingsService(ISettingsStore store)
         var model = await store.GetAsync(AppSettingKeys.OpenAiModel, cancellationToken)
             ?? "gpt-5.6-sol";
         var previewValue = await store.GetAsync(AppSettingKeys.SendPreviewEnabled, cancellationToken);
+        var reminderEnabledValue = await store.GetAsync(AppSettingKeys.ReminderEnabled, cancellationToken);
+        var reminderTimeValue = await store.GetAsync(AppSettingKeys.ReminderTime, cancellationToken);
+        var graphClientId = await store.GetAsync(AppSettingKeys.GraphClientId, cancellationToken);
+        var graphTenantId = await store.GetAsync(AppSettingKeys.GraphTenantId, cancellationToken);
+        var graphMailEnabledValue = await store.GetAsync(AppSettingKeys.GraphMailEnabled, cancellationToken);
+        var graphCalendarEnabledValue = await store.GetAsync(AppSettingKeys.GraphCalendarEnabled, cancellationToken);
 
         var weekStartsOn = Enum.TryParse<DayOfWeek>(weekValue, true, out var parsed)
             ? parsed
             : DayOfWeek.Monday;
+        var reminderTime = TimeOnly.TryParseExact(
+            reminderTimeValue,
+            "HH:mm",
+            out var parsedReminderTime)
+            ? parsedReminderTime
+            : AppSettingsSnapshot.DefaultReminderTime;
 
         return new AppSettingsSnapshot(
             company,
@@ -47,7 +66,13 @@ public sealed class AppSettingsService(ISettingsStore store)
             string.IsNullOrWhiteSpace(codexFolder) ? null : codexFolder.Trim(),
             recentFolders,
             model,
-            !bool.TryParse(previewValue, out var previewEnabled) || previewEnabled);
+            !bool.TryParse(previewValue, out var previewEnabled) || previewEnabled,
+            !bool.TryParse(reminderEnabledValue, out var reminderEnabled) || reminderEnabled,
+            reminderTime,
+            string.IsNullOrWhiteSpace(graphClientId) ? string.Empty : graphClientId.Trim(),
+            string.IsNullOrWhiteSpace(graphTenantId) ? "common" : graphTenantId.Trim(),
+            bool.TryParse(graphMailEnabledValue, out var graphMailEnabled) && graphMailEnabled,
+            bool.TryParse(graphCalendarEnabledValue, out var graphCalendarEnabled) && graphCalendarEnabled);
     }
 
     public async Task SaveAsync(AppSettingsSnapshot settings, CancellationToken cancellationToken = default)
@@ -80,12 +105,36 @@ public sealed class AppSettingsService(ISettingsStore store)
             AppSettingKeys.SendPreviewEnabled,
             settings.SendPreviewEnabled.ToString(),
             cancellationToken);
+        await store.SetAsync(
+            AppSettingKeys.ReminderEnabled,
+            settings.ReminderEnabled.ToString(),
+            cancellationToken);
+        await store.SetAsync(
+            AppSettingKeys.ReminderTime,
+            settings.ReminderTime.ToString("HH:mm"),
+            cancellationToken);
+        await store.SetAsync(
+            AppSettingKeys.GraphClientId,
+            settings.GraphClientId,
+            cancellationToken);
+        await store.SetAsync(
+            AppSettingKeys.GraphTenantId,
+            settings.GraphTenantId,
+            cancellationToken);
+        await store.SetAsync(
+            AppSettingKeys.GraphMailEnabled,
+            settings.GraphMailEnabled.ToString(),
+            cancellationToken);
+        await store.SetAsync(
+            AppSettingKeys.GraphCalendarEnabled,
+            settings.GraphCalendarEnabled.ToString(),
+            cancellationToken);
     }
 
     private static IReadOnlyList<string> ParsePaths(string? value) =>
         string.IsNullOrWhiteSpace(value)
             ? []
-            : value.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            : value.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
 }
@@ -99,9 +148,19 @@ public sealed record AppSettingsSnapshot(
     string? CodexSessionFolder = null,
     IReadOnlyList<string>? ConfiguredRecentFileFolders = null,
     string OpenAiModel = "gpt-5.6-sol",
-    bool SendPreviewEnabled = true)
+    bool SendPreviewEnabled = true,
+    bool ReminderEnabled = true,
+    TimeOnly? ConfiguredReminderTime = null,
+    string GraphClientId = "",
+    string GraphTenantId = "common",
+    bool GraphMailEnabled = false,
+    bool GraphCalendarEnabled = false)
 {
+    public static TimeOnly DefaultReminderTime { get; } = new(17, 0);
+
     public IReadOnlyList<string> LocalRepositoryPaths => ConfiguredLocalRepositoryPaths ?? [];
 
     public IReadOnlyList<string> RecentFileFolders => ConfiguredRecentFileFolders ?? [];
+
+    public TimeOnly ReminderTime => ConfiguredReminderTime ?? DefaultReminderTime;
 }
