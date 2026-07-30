@@ -110,6 +110,15 @@ public interface IWeeklyReportExporter
         CancellationToken cancellationToken = default);
 }
 
+public interface IStartupRegistrar
+{
+    bool IsEnabled();
+
+    void Enable();
+
+    void Disable();
+}
+
 public sealed record ReportIdentity(string CompanyName, string EmployeeName)
 {
     public static ReportIdentity Default { get; } = new("YAHATA USA", "太田 貴也");

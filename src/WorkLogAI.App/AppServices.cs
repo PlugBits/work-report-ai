@@ -18,9 +18,11 @@ public sealed class AppServices
         Notes = new SqliteQuickNoteRepository(connections);
         SourceEvents = new SqliteSourceEventRepository(connections);
         Candidates = new SqliteReportCandidateRepository(connections);
-        Settings = new AppSettingsService(new SqliteSettingsStore(connections));
+        SettingsStore = new SqliteSettingsStore(connections);
+        Settings = new AppSettingsService(SettingsStore);
         Exporter = new ClosedXmlWeeklyReportExporter();
         Credentials = new WindowsCredentialStore();
+        StartupRegistrar = new WindowsStartupRegistrar();
     }
 
     public IQuickNoteRepository Notes { get; }
@@ -34,6 +36,10 @@ public sealed class AppServices
     public IWeeklyReportExporter Exporter { get; }
 
     public ICredentialStore Credentials { get; }
+
+    public IStartupRegistrar StartupRegistrar { get; }
+
+    public ISettingsStore SettingsStore { get; }
 
     public async Task InitializeAsync()
     {

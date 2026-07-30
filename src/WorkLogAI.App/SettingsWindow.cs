@@ -12,6 +12,8 @@ public sealed class SettingsWindow : Window
 {
     private readonly AppSettingsService _settings;
     private readonly ICredentialStore _credentials;
+    private readonly IStartupRegistrar _startupRegistrar;
+    private readonly bool _sampleMode;
     private readonly TextBox _company = new();
     private readonly TextBox _employee = new();
     private readonly ComboBox _weekStart = new();
@@ -24,21 +26,30 @@ public sealed class SettingsWindow : Window
     private readonly PasswordBox _apiKey = new();
     private readonly CheckBox _removeApiKey = new() { Content = "保存済みAPIキーを削除" };
     private readonly TextBlock _credentialStatus = new();
+    private readonly CheckBox _reminderEnabled = new() { Content = "平日夕方にメモ0件をリマインド" };
+    private readonly TextBox _reminderTime = new();
+    private readonly CheckBox _autoStart = new() { Content = "Windowsログイン時に自動起動する" };
 
-    public SettingsWindow(AppSettingsService settings, ICredentialStore credentials)
+    public SettingsWindow(
+        AppSettingsService settings,
+        ICredentialStore credentials,
+        IStartupRegistrar startupRegistrar,
+        bool sampleMode = false)
     {
         _settings = settings;
         _credentials = credentials;
+        _startupRegistrar = startupRegistrar;
+        _sampleMode = sampleMode;
         Title = "設定 - WorkLog AI";
         Width = 560;
-        Height = 760;
+        Height = 840;
         ResizeMode = ResizeMode.NoResize;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
 
         var grid = new Grid { Margin = new Thickness(16) };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
         grid.ColumnDefinitions.Add(new ColumnDefinition());
-        for (var i = 0; i < 14; i++)
+        for (var i = 0; i < 17; i++)
         {
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         }
@@ -75,6 +86,10 @@ public sealed class SettingsWindow : Window
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(4, 8, 4, 8)
         });
+        AddRow(grid, 14, "メモ0件リマインド", _reminderEnabled);
+        AddRow(grid, 15, "リマインド時刻(HH:mm)", _reminderTime);
+        _autoStart.IsEnabled = !_sampleMode;
+        AddRow(grid, 16, "自動起動", _autoStart);
 
         var buttons = new StackPanel
         {
@@ -93,7 +108,7 @@ public sealed class SettingsWindow : Window
         };
         buttons.Children.Add(save);
         buttons.Children.Add(cancel);
-        Grid.SetRow(buttons, 14);
+        Grid.SetRow(buttons, 17);
         Grid.SetColumnSpan(buttons, 2);
 
         grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -135,6 +150,8 @@ public sealed class SettingsWindow : Window
         _recentFolders.Text = string.Join(Environment.NewLine, values.RecentFileFolders);
         _model.Text = values.OpenAiModel;
         _preview.IsChecked = values.SendPreviewEnabled;
+        _reminderEnabled.IsChecked = values.ReminderEnabled;
+        _reminderTime.Text = values.ReminderTime.ToString("HH:mm");
         try
         {
             _credentialStatus.Text = string.IsNullOrWhiteSpace(
@@ -146,6 +163,16 @@ public sealed class SettingsWindow : Window
         {
             _credentialStatus.Text = "Credential Managerを利用できません";
         }
+
+        try
+        {
+            _autoStart.IsChecked = _startupRegistrar.IsEnabled();
+        }
+        catch
+        {
+            _autoStart.IsChecked = false;
+        }
+        _autoStart.IsEnabled = !_sampleMode;
     }
 
     private async void SaveAsync(object sender, RoutedEventArgs e)
@@ -160,6 +187,12 @@ public sealed class SettingsWindow : Window
             return;
         }
 
+        if (!TimeOnly.TryParseExact(_reminderTime.Text.Trim(), "HH:mm", out var reminderTime))
+        {
+            MessageBox.Show(this, "リマインド時刻はHH:mm形式で入力してください。", "WorkLog AI");
+            return;
+        }
+
         try
         {
             await _settings.SaveAsync(new AppSettingsSnapshot(
@@ -171,7 +204,9 @@ public sealed class SettingsWindow : Window
                 string.IsNullOrWhiteSpace(_codexFolder.Text) ? null : _codexFolder.Text.Trim(),
                 ParsePaths(_recentFolders.Text),
                 _model.Text.Trim(),
-                _preview.IsChecked == true));
+                _preview.IsChecked == true,
+                _reminderEnabled.IsChecked == true,
+                reminderTime));
             if (_removeApiKey.IsChecked == true)
             {
                 await _credentials.DeleteAsync(CredentialTargets.OpenAiApiKey);
@@ -193,6 +228,32 @@ public sealed class SettingsWindow : Window
                 MessageBoxImage.Error);
             return;
         }
+
+        if (!_sampleMode)
+        {
+            try
+            {
+                if (_autoStart.IsChecked == true)
+                {
+                    _startupRegistrar.Enable();
+                }
+                else
+                {
+                    _startupRegistrar.Disable();
+                }
+            }
+            catch (Exception exception)
+            {
+                MessageBox.Show(
+                    this,
+                    exception.Message,
+                    "WorkLog AI",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+                return;
+            }
+        }
+
         DialogResult = true;
     }
 

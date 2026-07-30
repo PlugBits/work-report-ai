@@ -12,6 +12,9 @@ public static class AppSettingKeys
     public const string RecentFileFolders = "collection.recent_file_folders";
     public const string OpenAiModel = "ai.openai_model";
     public const string SendPreviewEnabled = "ai.send_preview_enabled";
+    public const string ReminderEnabled = "reminder.enabled";
+    public const string ReminderTime = "reminder.time";
+    public const string ReminderLastShownDate = "reminder.last_shown_date";
 }
 
 public sealed class AppSettingsService(ISettingsStore store)
@@ -33,10 +36,18 @@ public sealed class AppSettingsService(ISettingsStore store)
         var model = await store.GetAsync(AppSettingKeys.OpenAiModel, cancellationToken)
             ?? "gpt-5.6-sol";
         var previewValue = await store.GetAsync(AppSettingKeys.SendPreviewEnabled, cancellationToken);
+        var reminderEnabledValue = await store.GetAsync(AppSettingKeys.ReminderEnabled, cancellationToken);
+        var reminderTimeValue = await store.GetAsync(AppSettingKeys.ReminderTime, cancellationToken);
 
         var weekStartsOn = Enum.TryParse<DayOfWeek>(weekValue, true, out var parsed)
             ? parsed
             : DayOfWeek.Monday;
+        var reminderTime = TimeOnly.TryParseExact(
+            reminderTimeValue,
+            "HH:mm",
+            out var parsedReminderTime)
+            ? parsedReminderTime
+            : AppSettingsSnapshot.DefaultReminderTime;
 
         return new AppSettingsSnapshot(
             company,
@@ -47,7 +58,9 @@ public sealed class AppSettingsService(ISettingsStore store)
             string.IsNullOrWhiteSpace(codexFolder) ? null : codexFolder.Trim(),
             recentFolders,
             model,
-            !bool.TryParse(previewValue, out var previewEnabled) || previewEnabled);
+            !bool.TryParse(previewValue, out var previewEnabled) || previewEnabled,
+            !bool.TryParse(reminderEnabledValue, out var reminderEnabled) || reminderEnabled,
+            reminderTime);
     }
 
     public async Task SaveAsync(AppSettingsSnapshot settings, CancellationToken cancellationToken = default)
@@ -80,6 +93,14 @@ public sealed class AppSettingsService(ISettingsStore store)
             AppSettingKeys.SendPreviewEnabled,
             settings.SendPreviewEnabled.ToString(),
             cancellationToken);
+        await store.SetAsync(
+            AppSettingKeys.ReminderEnabled,
+            settings.ReminderEnabled.ToString(),
+            cancellationToken);
+        await store.SetAsync(
+            AppSettingKeys.ReminderTime,
+            settings.ReminderTime.ToString("HH:mm"),
+            cancellationToken);
     }
 
     private static IReadOnlyList<string> ParsePaths(string? value) =>
@@ -99,9 +120,15 @@ public sealed record AppSettingsSnapshot(
     string? CodexSessionFolder = null,
     IReadOnlyList<string>? ConfiguredRecentFileFolders = null,
     string OpenAiModel = "gpt-5.6-sol",
-    bool SendPreviewEnabled = true)
+    bool SendPreviewEnabled = true,
+    bool ReminderEnabled = true,
+    TimeOnly? ConfiguredReminderTime = null)
 {
+    public static TimeOnly DefaultReminderTime { get; } = new(17, 0);
+
     public IReadOnlyList<string> LocalRepositoryPaths => ConfiguredLocalRepositoryPaths ?? [];
 
     public IReadOnlyList<string> RecentFileFolders => ConfiguredRecentFileFolders ?? [];
+
+    public TimeOnly ReminderTime => ConfiguredReminderTime ?? DefaultReminderTime;
 }
