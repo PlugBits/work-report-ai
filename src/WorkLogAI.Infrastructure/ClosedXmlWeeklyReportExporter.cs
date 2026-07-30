@@ -48,8 +48,9 @@ public sealed class ClosedXmlWeeklyReportExporter : IWeeklyReportExporter
         sheet.Range("A3:D3").Style.Font.Bold = true;
         sheet.Range("A3:D3").Style.Fill.BackgroundColor = XLColor.LightGray;
 
+        var orderedRows = rows.OrderBy(row => row.Date).ToList();
         var rowNumber = 4;
-        foreach (var row in rows.OrderBy(row => row.Date))
+        foreach (var row in orderedRows)
         {
             cancellationToken.ThrowIfCancellationRequested();
             sheet.Cell(rowNumber, 1).Value = row.Date.ToDateTime(TimeOnly.MinValue);
@@ -61,6 +62,30 @@ public sealed class ClosedXmlWeeklyReportExporter : IWeeklyReportExporter
         }
 
         var lastRow = Math.Max(3, rowNumber - 1);
+
+        // Vertically merge the 日時 (date) cell across consecutive rows sharing the
+        // same date. Must happen before border styling below so the merged block's
+        // inside/outside thin borders render correctly around the merged region.
+        var runStartRow = 4;
+        for (var index = 1; index < orderedRows.Count; index++)
+        {
+            var currentRow = 4 + index;
+            if (orderedRows[index].Date != orderedRows[index - 1].Date)
+            {
+                if (currentRow - 1 > runStartRow)
+                {
+                    sheet.Range(runStartRow, 1, currentRow - 1, 1).Merge();
+                }
+
+                runStartRow = currentRow;
+            }
+        }
+
+        if (orderedRows.Count > 0 && lastRow > runStartRow)
+        {
+            sheet.Range(runStartRow, 1, lastRow, 1).Merge();
+        }
+
         var reportRange = sheet.Range(3, 1, lastRow, 4);
         sheet.Range(1, 1, lastRow, 4).Style.Alignment.WrapText = true;
         reportRange.Style.Alignment.Vertical = XLAlignmentVerticalValues.Top;
