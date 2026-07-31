@@ -12,6 +12,8 @@ public partial class App : System.Windows.Application
     private const int QuickCaptureHotKeyId = 0x5741;
     private const int MeetingHotKeyId = 0x574D;
 
+    private static readonly TimeSpan DialogSuppressionWindow = TimeSpan.FromSeconds(30);
+
     private Forms.NotifyIcon? _trayIcon;
     private GlobalHotKey? _hotKey;
     private GlobalHotKey? _meetingHotKey;
@@ -19,11 +21,16 @@ public partial class App : System.Windows.Application
     private DispatcherTimer? _reminderTimer;
     private int _collectionRunning;
     private bool _sampleMode;
+    private DateTime _lastUnhandledDialogShownAt = DateTime.MinValue;
 
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
+
+        DispatcherUnhandledException += OnDispatcherUnhandledException;
+        AppDomain.CurrentDomain.UnhandledException += OnDomainUnhandledException;
+        TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
 
         try
         {
@@ -83,6 +90,70 @@ public partial class App : System.Windows.Application
         }
 
         base.OnExit(e);
+    }
+
+    private void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
+    {
+        try
+        {
+            ErrorLog.Log("App.DispatcherUnhandled", e.Exception);
+            e.Handled = true;
+
+            var now = DateTime.UtcNow;
+            if (now - _lastUnhandledDialogShownAt >= DialogSuppressionWindow)
+            {
+                _lastUnhandledDialogShownAt = now;
+                MessageBox.Show(
+                    "予期しないエラーが発生しました。操作をやり直してください。\n詳細はログに記録されました。",
+                    "WorkLog AI",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            }
+        }
+        catch
+        {
+            // Handling an unhandled exception must never itself throw.
+        }
+    }
+
+    private void OnDomainUnhandledException(object sender, UnhandledExceptionEventArgs e)
+    {
+        try
+        {
+            ErrorLog.Log(
+                "App.DomainUnhandled",
+                e.ExceptionObject as Exception ?? new Exception(e.ExceptionObject?.ToString() ?? "unknown"));
+        }
+        catch
+        {
+            // Logging must never throw here.
+        }
+
+        try
+        {
+            if (_trayIcon is not null)
+            {
+                _trayIcon.Visible = false;
+                _trayIcon.Dispose();
+            }
+        }
+        catch
+        {
+            // Best-effort cleanup only; the process is already going down.
+        }
+    }
+
+    private void OnUnobservedTaskException(object? sender, UnobservedTaskExceptionEventArgs e)
+    {
+        try
+        {
+            ErrorLog.Log("App.UnobservedTask", e.Exception);
+            e.SetObserved();
+        }
+        catch
+        {
+            // Handling an unobserved task exception must never itself throw.
+        }
     }
 
     private void CreateTrayIcon(bool sampleMode)
