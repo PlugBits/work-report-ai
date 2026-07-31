@@ -41,6 +41,10 @@ public interface ISourceEventRepository
     Task<IReadOnlyList<SourceEvent>> GetByIdsAsync(
         IReadOnlyCollection<Guid> ids,
         CancellationToken cancellationToken = default);
+
+    Task<int> DeleteByIdsAsync(
+        IReadOnlyCollection<Guid> ids,
+        CancellationToken cancellationToken = default);
 }
 
 public interface IReportCandidateRepository
