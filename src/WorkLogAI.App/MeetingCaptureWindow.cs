@@ -56,6 +56,7 @@ public sealed class MeetingCaptureWindow : Window
 
     public MeetingCaptureWindow(AppServices services, MeetingSession? existingSession)
     {
+        AppTheme.Apply(this);
         _services = services;
         _initialSession = existingSession;
 
@@ -87,6 +88,7 @@ public sealed class MeetingCaptureWindow : Window
         };
         _aiFormatButton.Click += AiFormatButtonClick;
         endRow.Children.Add(_aiFormatButton);
+        _endButton.Style = (Style)System.Windows.Application.Current.FindResource("AccentButton");
         _endButton.Click += EndMeetingAsync;
         endRow.Children.Add(_endButton);
         header.Children.Add(endRow);

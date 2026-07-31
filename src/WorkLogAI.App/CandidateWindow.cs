@@ -24,11 +24,15 @@ public sealed class CandidateWindow : Window
         Margin = new Thickness(0, 0, 0, 10)
     };
     private readonly List<Guid> _pendingDeletedReviewManualEventIds = [];
+    private readonly StackPanel _notesList = new();
     private List<CandidateEditor> _items = [];
+    private IReadOnlyList<QuickNote> _weekNotes = [];
     private bool _lowConfidenceOnly;
+    private DateOnly? _dayFilter;
 
     public CandidateWindow(AppServices services, WeekRange range, string? statusBanner = null)
     {
+        AppTheme.Apply(this);
         _services = services;
         _range = range;
         Title = $"週次レビュー {range.Start:yyyy/MM/dd}〜{range.End:yyyy/MM/dd}";
@@ -54,7 +58,9 @@ public sealed class CandidateWindow : Window
         actions.Children.Add(ActionButton("重複候補を統合", MergeCandidates));
         actions.Children.Add(ActionButton("1行追加", AddManualRowAsync));
         actions.Children.Add(ActionButton("編集を保存", SaveAsync));
-        actions.Children.Add(ActionButton("Excel出力", ExportAsync));
+        var exportButton = ActionButton("Excel出力", ExportAsync);
+        exportButton.Style = (Style)System.Windows.Application.Current.FindResource("AccentButton");
+        actions.Children.Add(exportButton);
         DockPanel.SetDock(actions, Dock.Top);
         root.Children.Add(actions);
 
@@ -62,10 +68,10 @@ public sealed class CandidateWindow : Window
         {
             var banner = new Border
             {
-                Background = new SolidColorBrush(Color.FromRgb(0xE3, 0xF2, 0xFD)),
-                BorderBrush = new SolidColorBrush(Color.FromRgb(0x90, 0xCA, 0xF9)),
+                Background = new SolidColorBrush(Color.FromRgb(0xEF, 0xF6, 0xFF)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(0xBF, 0xDB, 0xFE)),
                 BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(4),
+                CornerRadius = new CornerRadius(6),
                 Padding = new Thickness(10, 8, 10, 8),
                 Margin = new Thickness(0, 0, 0, 10),
                 Child = new TextBlock
@@ -80,6 +86,28 @@ public sealed class CandidateWindow : Window
 
         DockPanel.SetDock(_coverageBar, Dock.Top);
         root.Children.Add(_coverageBar);
+
+        var notesSidebar = new DockPanel
+        {
+            Width = 280,
+            Margin = new Thickness(12, 0, 0, 0)
+        };
+        var notesHeading = new TextBlock
+        {
+            Text = "今週のクイック入力",
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(0, 0, 0, 8)
+        };
+        DockPanel.SetDock(notesHeading, Dock.Top);
+        notesSidebar.Children.Add(notesHeading);
+        var notesScroll = new ScrollViewer
+        {
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Content = _notesList
+        };
+        notesSidebar.Children.Add(notesScroll);
+        DockPanel.SetDock(notesSidebar, Dock.Right);
+        root.Children.Add(notesSidebar);
 
         var scroll = new ScrollViewer
         {
@@ -99,28 +127,50 @@ public sealed class CandidateWindow : Window
         var byId = sourceEvents.ToDictionary(item => item.Id);
         _items = candidates.Select(candidate =>
             new CandidateEditor(candidate, EvidenceFormatter.Describe(candidate.SourceEventIds, byId))).ToList();
+
+        var bounds = WeekRangeTimeBounds.Local(_range);
+        _weekNotes = await _services.Notes.ListAsync(bounds.From, bounds.To);
+
         RenderCards();
     }
 
     private void RenderCards()
     {
         _cards.Children.Clear();
-        var visible = _lowConfidenceOnly
-            ? _items.Where(item => item.Confidence < .6)
-            : _items;
-        foreach (var item in visible)
+        IEnumerable<CandidateEditor> visible = _items;
+        if (_lowConfidenceOnly)
+        {
+            visible = visible.Where(item => item.Confidence < .6);
+        }
+        if (_dayFilter is { } filterDate)
+        {
+            visible = visible.Where(item =>
+                DateOnly.TryParse(item.WorkDateText, out var date) && date == filterDate);
+        }
+        var visibleItems = visible.ToList();
+        foreach (var item in visibleItems)
         {
             _cards.Children.Add(CreateCard(item));
         }
-        if (!_cards.Children.Cast<UIElement>().Any())
+        if (visibleItems.Count == 0)
         {
-            _cards.Children.Add(new TextBlock
-            {
-                Text = "表示する候補がありません。",
-                Margin = new Thickness(8)
-            });
+            _cards.Children.Add(_dayFilter is { } emptyFilterDate
+                ? CreateEmptyDayFilterMessage(emptyFilterDate)
+                : new TextBlock { Text = "表示する候補がありません。", Margin = new Thickness(8) });
         }
         RenderCoverageBar();
+        RenderNotesSidebar();
+    }
+
+    private FrameworkElement CreateEmptyDayFilterMessage(DateOnly date)
+    {
+        var panel = new StackPanel { Margin = new Thickness(8) };
+        panel.Children.Add(new TextBlock { Text = $"{date:M/d} の候補はありません。" });
+        var addButton = ActionButton("この日に1行追加", (_, _) => _ = AddManualRowAsync(date));
+        addButton.Margin = new Thickness(0, 8, 0, 0);
+        addButton.HorizontalAlignment = HorizontalAlignment.Left;
+        panel.Children.Add(addButton);
+        return panel;
     }
 
     private void RenderCoverageBar()
@@ -134,6 +184,8 @@ public sealed class CandidateWindow : Window
             Margin = new Thickness(0, 0, 8, 0)
         });
 
+        _coverageBar.Children.Add(CreateAllChip());
+
         var candidateDates = _items
             .Select(item => DateOnly.TryParse(item.WorkDateText, out var date) ? (DateOnly?)date : null)
             .Where(date => date.HasValue)
@@ -145,6 +197,23 @@ public sealed class CandidateWindow : Window
         }
     }
 
+    private Button CreateAllChip()
+    {
+        var button = new Button
+        {
+            Content = "全て",
+            Padding = new Thickness(8, 4, 8, 4),
+            Margin = new Thickness(0, 0, 6, 0)
+        };
+        button.Click += (_, _) =>
+        {
+            _dayFilter = null;
+            RenderCards();
+        };
+        ApplyChipState(button, _dayFilter is null);
+        return button;
+    }
+
     private FrameworkElement CreateCoverageDayElement(DayCoverage day)
     {
         var label = new TextBlock
@@ -153,36 +222,77 @@ public sealed class CandidateWindow : Window
             TextAlignment = TextAlignment.Center
         };
 
-        if (day.HasCandidates)
-        {
-            return new Border
-            {
-                Background = Brushes.WhiteSmoke,
-                BorderBrush = Brushes.LightGray,
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(4),
-                Padding = new Thickness(8, 4, 8, 4),
-                Margin = new Thickness(0, 0, 6, 0),
-                Child = label
-            };
-        }
-
         var button = new Button
         {
             Content = label,
             Padding = new Thickness(8, 4, 8, 4),
             Margin = new Thickness(0, 0, 6, 0),
-            Background = day.IsWeekday
-                ? new SolidColorBrush(Color.FromRgb(0xFF, 0xCD, 0xD2))
-                : new SolidColorBrush(Color.FromRgb(0xFF, 0xF3, 0xE0)),
-            BorderBrush = day.IsWeekday ? Brushes.IndianRed : Brushes.SandyBrown,
+            Background = day.HasCandidates
+                ? Brushes.WhiteSmoke
+                : day.IsWeekday
+                    ? new SolidColorBrush(Color.FromRgb(0xFF, 0xCD, 0xD2))
+                    : new SolidColorBrush(Color.FromRgb(0xFF, 0xF3, 0xE0)),
+            BorderBrush = day.HasCandidates
+                ? Brushes.LightGray
+                : day.IsWeekday ? Brushes.IndianRed : Brushes.SandyBrown,
             Foreground = Brushes.Black,
-            ToolTip = day.IsWeekday
-                ? "この日の候補がありません。クリックして手動で追加できます。"
-                : "この日の候補はありません（週末）。クリックして手動で追加できます。"
+            ToolTip = day.HasCandidates
+                ? "クリックしてこの日の候補だけを表示します。"
+                : day.IsWeekday
+                    ? "この日の候補がありません。クリックして絞り込みます。"
+                    : "この日の候補はありません（週末）。クリックして絞り込みます。"
         };
-        button.Click += (_, _) => _ = AddManualRowAsync(day.Date);
+        button.Click += (_, _) =>
+        {
+            _dayFilter = _dayFilter == day.Date ? null : day.Date;
+            RenderCards();
+        };
+        ApplyChipState(button, _dayFilter == day.Date);
         return button;
+    }
+
+    private static void ApplyChipState(Button button, bool isActive)
+    {
+        if (!isActive)
+        {
+            return;
+        }
+        button.BorderThickness = new Thickness(2);
+        button.FontWeight = FontWeights.Bold;
+    }
+
+    private void RenderNotesSidebar()
+    {
+        _notesList.Children.Clear();
+        IEnumerable<QuickNote> notes = _weekNotes;
+        if (_dayFilter is { } filterDate)
+        {
+            notes = notes.Where(note =>
+                DateOnly.FromDateTime(note.CreatedAt.ToLocalTime().DateTime) == filterDate);
+        }
+        var notesToShow = notes.OrderBy(note => note.CreatedAt).ToList();
+
+        if (notesToShow.Count == 0)
+        {
+            _notesList.Children.Add(new TextBlock
+            {
+                Text = "この週のクイック入力はありません。",
+                Foreground = Brushes.DimGray,
+                TextWrapping = TextWrapping.Wrap
+            });
+            return;
+        }
+
+        foreach (var note in notesToShow)
+        {
+            var localTime = note.CreatedAt.ToLocalTime();
+            _notesList.Children.Add(new TextBlock
+            {
+                Text = $"{localTime:MM/dd}({JapaneseDayOfWeek(localTime.DayOfWeek)}) {localTime:HH:mm}  {note.Text}",
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 0, 0, 8)
+            });
+        }
     }
 
     private static string JapaneseDayOfWeek(DayOfWeek dayOfWeek) => dayOfWeek switch
@@ -208,7 +318,8 @@ public sealed class CandidateWindow : Window
         var deleteButton = new Button
         {
             Content = "削除",
-            Padding = new Thickness(9, 3, 9, 3)
+            Padding = new Thickness(9, 3, 9, 3),
+            Foreground = new SolidColorBrush(Color.FromRgb(0xDC, 0x26, 0x26))
         };
         deleteButton.Click += (_, _) => _ = DeleteCardAsync(item);
         DockPanel.SetDock(deleteButton, Dock.Right);
@@ -258,11 +369,12 @@ public sealed class CandidateWindow : Window
 
         return new Border
         {
-            BorderBrush = Brushes.LightGray,
+            Background = Brushes.White,
+            BorderBrush = new SolidColorBrush(Color.FromRgb(0xE5, 0xE7, 0xEB)),
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(6),
+            CornerRadius = new CornerRadius(8),
             Padding = new Thickness(12),
-            Margin = new Thickness(0, 0, 0, 12),
+            Margin = new Thickness(0, 0, 0, 10),
             Child = panel
         };
     }

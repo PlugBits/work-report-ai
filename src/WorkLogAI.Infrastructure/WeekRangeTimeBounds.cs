@@ -2,7 +2,7 @@ using WorkLogAI.Core;
 
 namespace WorkLogAI.Infrastructure;
 
-internal static class WeekRangeTimeBounds
+public static class WeekRangeTimeBounds
 {
     public static (DateTimeOffset From, DateTimeOffset To) Local(WeekRange range)
     {

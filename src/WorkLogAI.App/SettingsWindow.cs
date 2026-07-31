@@ -50,6 +50,7 @@ public sealed class SettingsWindow : Window
         Func<string, string, GraphAuthService> graphAuthFactory,
         bool sampleMode = false)
     {
+        AppTheme.Apply(this);
         _settings = settings;
         _credentials = credentials;
         _startupRegistrar = startupRegistrar;
@@ -136,6 +137,7 @@ public sealed class SettingsWindow : Window
             Margin = new Thickness(0, 12, 0, 0)
         };
         var save = new Button { Content = "保存", IsDefault = true, Padding = new Thickness(18, 6, 18, 6) };
+        save.Style = (Style)System.Windows.Application.Current.FindResource("AccentButton");
         save.Click += SaveAsync;
         var cancel = new Button
         {
