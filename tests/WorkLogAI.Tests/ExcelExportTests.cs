@@ -30,22 +30,25 @@ public sealed class ExcelExportTests
         using var workbook = new XLWorkbook(path);
         var sheet = workbook.Worksheet("業務週報");
         Assert.Equal("業務週報 2026/07/27〜2026/08/02", sheet.Cell("A1").GetString());
-        Assert.Equal("サンプル株式会社", sheet.Cell("D1").GetString());
-        Assert.Equal("山田 太郎", sheet.Cell("D2").GetString());
+        Assert.Equal("サンプル株式会社", sheet.Cell("E1").GetString());
+        Assert.Equal("山田 太郎", sheet.Cell("E2").GetString());
         Assert.Equal(
-            new[] { "日時", "項目/案件・目標金額", "活動内容", "結果・決定事項/今後の課題" },
-            sheet.Range("A3:D3").Cells().Select(cell => cell.GetString()).ToArray());
+            new[] { "日付", "曜日", "項目/案件・目標金額", "活動内容", "結果・決定事項/今後の課題" },
+            sheet.Range("A3:E3").Cells().Select(cell => cell.GetString()).ToArray());
 
-        // Day cell is exactly two lines: the date, then the single-character
-        // Japanese weekday in parentheses. 2026/07/28 is a Tuesday.
-        Assert.Equal("2026/07/28\n(火)", sheet.Cell("A4").GetString());
-        Assert.Equal("① 最初", sheet.Cell("C4").GetString());
+        // Date and weekday are separate cells now: A holds the date only, B
+        // holds the single-character Japanese weekday in parentheses.
+        // 2026/07/28 is a Tuesday.
+        Assert.Equal("2026/07/28", sheet.Cell("A4").GetString());
+        Assert.Equal("(火)", sheet.Cell("B4").GetString());
+        Assert.Equal("① 最初", sheet.Cell("D4").GetString());
 
         // Each day block is a uniform 4 rows (1 item row + 3 blanks), so the
         // second date's item row starts exactly 4 rows after the first.
         // 2026/07/30 is a Thursday.
-        Assert.Equal("2026/07/30\n(木)", sheet.Cell("A8").GetString());
-        Assert.Equal("① 二番目", sheet.Cell("C8").GetString());
+        Assert.Equal("2026/07/30", sheet.Cell("A8").GetString());
+        Assert.Equal("(木)", sheet.Cell("B8").GetString());
+        Assert.Equal("① 二番目", sheet.Cell("D8").GetString());
 
         Assert.Equal(string.Empty, sheet.Cell("A5").GetString());
         Assert.Equal(string.Empty, sheet.Cell("A6").GetString());
@@ -53,9 +56,11 @@ public sealed class ExcelExportTests
         Assert.Equal(string.Empty, sheet.Cell("A9").GetString());
         Assert.Equal(string.Empty, sheet.Cell("A10").GetString());
         Assert.Equal(string.Empty, sheet.Cell("A11").GetString());
+        Assert.Equal(string.Empty, sheet.Cell("B5").GetString());
+        Assert.Equal(string.Empty, sheet.Cell("B9").GetString());
 
         Assert.All(
-            sheet.Range("A3:D11").Cells(),
+            sheet.Range("A3:E11").Cells(),
             cell => Assert.True(cell.Style.Alignment.WrapText));
         Assert.Equal(XLPageOrientation.Landscape, sheet.PageSetup.PageOrientation);
         Assert.Equal(1, sheet.PageSetup.PagesWide);
@@ -82,7 +87,7 @@ public sealed class ExcelExportTests
         var sheet = workbook.Worksheet("業務週報");
 
         Assert.All(
-            sheet.Range("A3:D3").Cells(),
+            sheet.Range("A3:E3").Cells(),
             cell =>
             {
                 Assert.True(cell.Style.Font.Bold);
@@ -115,28 +120,32 @@ public sealed class ExcelExportTests
 
         // 7/28 has two items -> one sheet row per item (rows 4-5), so the
         // 項目/活動内容/結果 cells for each item sit on the same row. The date
-        // cell appears only on the block's first row (4); row 5's A cell is
-        // empty. Padding brings the block to the uniform minimum of 4 rows,
-        // so blanks fill rows 6-7 and the next date's block starts at row 8.
-        Assert.Equal("2026/07/28\n(火)", sheet.Cell("A4").GetString());
-        Assert.Equal("① 案件A", sheet.Cell("B4").GetString());
-        Assert.Equal("① 最初の活動", sheet.Cell("C4").GetString());
-        Assert.Equal(string.Empty, sheet.Cell("D4").GetString());
+        // and weekday cells appear only on the block's first row (4); row
+        // 5's A/B cells are empty. Padding brings the block to the uniform
+        // minimum of 4 rows, so blanks fill rows 6-7 and the next date's
+        // block starts at row 8.
+        Assert.Equal("2026/07/28", sheet.Cell("A4").GetString());
+        Assert.Equal("(火)", sheet.Cell("B4").GetString());
+        Assert.Equal("① 案件A", sheet.Cell("C4").GetString());
+        Assert.Equal("① 最初の活動", sheet.Cell("D4").GetString());
+        Assert.Equal(string.Empty, sheet.Cell("E4").GetString());
 
         Assert.Equal(string.Empty, sheet.Cell("A5").GetString());
-        Assert.Equal("② 案件B", sheet.Cell("B5").GetString());
-        Assert.Equal("② 二番目の活動", sheet.Cell("C5").GetString());
-        Assert.Equal("② 完了", sheet.Cell("D5").GetString());
+        Assert.Equal(string.Empty, sheet.Cell("B5").GetString());
+        Assert.Equal("② 案件B", sheet.Cell("C5").GetString());
+        Assert.Equal("② 二番目の活動", sheet.Cell("D5").GetString());
+        Assert.Equal("② 完了", sheet.Cell("E5").GetString());
 
         Assert.Equal(string.Empty, sheet.Cell("A6").GetString());
-        Assert.Equal(string.Empty, sheet.Cell("B6").GetString());
+        Assert.Equal(string.Empty, sheet.Cell("C6").GetString());
         Assert.Equal(string.Empty, sheet.Cell("A7").GetString());
-        Assert.Equal(string.Empty, sheet.Cell("B7").GetString());
+        Assert.Equal(string.Empty, sheet.Cell("C7").GetString());
 
-        Assert.Equal("2026/07/30\n(木)", sheet.Cell("A8").GetString());
-        Assert.Equal("① 案件C", sheet.Cell("B8").GetString());
-        Assert.Equal("① 三番目の活動", sheet.Cell("C8").GetString());
-        Assert.Equal(string.Empty, sheet.Cell("D8").GetString());
+        Assert.Equal("2026/07/30", sheet.Cell("A8").GetString());
+        Assert.Equal("(木)", sheet.Cell("B8").GetString());
+        Assert.Equal("① 案件C", sheet.Cell("C8").GetString());
+        Assert.Equal("① 三番目の活動", sheet.Cell("D8").GetString());
+        Assert.Equal(string.Empty, sheet.Cell("E8").GetString());
 
         Assert.Equal(string.Empty, sheet.Cell("A9").GetString());
         Assert.Equal(string.Empty, sheet.Cell("A10").GetString());
@@ -170,15 +179,17 @@ public sealed class ExcelExportTests
         // 4 items already meet the minimum-4-rows floor, but the block must
         // still carry at least one trailing blank row (row 8), so the next
         // date's block starts at row 9, not row 8.
-        Assert.Equal("① 案件1", sheet.Cell("B4").GetString());
-        Assert.Equal("② 案件2", sheet.Cell("B5").GetString());
-        Assert.Equal("③ 案件3", sheet.Cell("B6").GetString());
-        Assert.Equal("④ 案件4", sheet.Cell("B7").GetString());
-        Assert.Equal(string.Empty, sheet.Cell("B8").GetString());
+        Assert.Equal("① 案件1", sheet.Cell("C4").GetString());
+        Assert.Equal("② 案件2", sheet.Cell("C5").GetString());
+        Assert.Equal("③ 案件3", sheet.Cell("C6").GetString());
+        Assert.Equal("④ 案件4", sheet.Cell("C7").GetString());
+        Assert.Equal(string.Empty, sheet.Cell("C8").GetString());
         Assert.Equal(string.Empty, sheet.Cell("A8").GetString());
+        Assert.Equal(string.Empty, sheet.Cell("B8").GetString());
 
-        Assert.Equal("2026/07/30\n(木)", sheet.Cell("A9").GetString());
-        Assert.Equal("① 案件5", sheet.Cell("B9").GetString());
+        Assert.Equal("2026/07/30", sheet.Cell("A9").GetString());
+        Assert.Equal("(木)", sheet.Cell("B9").GetString());
+        Assert.Equal("① 案件5", sheet.Cell("C9").GetString());
     }
 
     [Fact]
@@ -237,29 +248,29 @@ public sealed class ExcelExportTests
 
         // First day's block: item row 4, blank rows 5-7. Every row in the
         // data area — item and blank alike — has a Thin LeftBorder on every
-        // column A-D and a Thin RightBorder on column D only (constructive
+        // column A-E and a Thin RightBorder on column E only (constructive
         // vertical lines), and no TopBorder/BottomBorder anywhere except the
         // block's last row, which carries a Thin BottomBorder as the
         // boundary before the next day's block.
         for (var row = 4; row <= 7; row++)
         {
-            foreach (var column in new[] { 1, 2, 3, 4 })
+            foreach (var column in new[] { 1, 2, 3, 4, 5 })
             {
                 Assert.Equal(
                     XLBorderStyleValues.Thin,
                     sheet.Cell(row, column).Style.Border.LeftBorder);
             }
 
-            Assert.Equal(XLBorderStyleValues.Thin, sheet.Cell(row, 4).Style.Border.RightBorder);
+            Assert.Equal(XLBorderStyleValues.Thin, sheet.Cell(row, 5).Style.Border.RightBorder);
             Assert.Equal(XLBorderStyleValues.None, sheet.Cell(row, 1).Style.Border.RightBorder);
 
             var expectedBottom = row == 7 ? XLBorderStyleValues.Thin : XLBorderStyleValues.None;
-            foreach (var column in new[] { 1, 2, 3, 4 })
+            foreach (var column in new[] { 1, 2, 3, 4, 5 })
             {
                 Assert.Equal(expectedBottom, sheet.Cell(row, column).Style.Border.BottomBorder);
             }
 
-            foreach (var column in new[] { 1, 2, 3, 4 })
+            foreach (var column in new[] { 1, 2, 3, 4, 5 })
             {
                 Assert.Equal(
                     XLBorderStyleValues.None,
@@ -272,14 +283,16 @@ public sealed class ExcelExportTests
         Assert.Equal(string.Empty, sheet.Cell("B5").GetString());
         Assert.Equal(string.Empty, sheet.Cell("C5").GetString());
         Assert.Equal(string.Empty, sheet.Cell("D5").GetString());
+        Assert.Equal(string.Empty, sheet.Cell("E5").GetString());
 
         // Second (last) day gets the same constructive treatment, including
         // its own trailing blanks — every date's block is uniform, and its
         // own last row (11) carries the table's bottom boundary.
-        Assert.Equal("2026/07/30\n(木)", sheet.Cell("A8").GetString());
+        Assert.Equal("2026/07/30", sheet.Cell("A8").GetString());
+        Assert.Equal("(木)", sheet.Cell("B8").GetString());
         for (var row = 8; row <= 10; row++)
         {
-            foreach (var column in new[] { 1, 2, 3, 4 })
+            foreach (var column in new[] { 1, 2, 3, 4, 5 })
             {
                 Assert.Equal(
                     XLBorderStyleValues.None,
@@ -288,14 +301,14 @@ public sealed class ExcelExportTests
         }
 
         Assert.Equal(XLBorderStyleValues.Thin, sheet.Cell("A11").Style.Border.BottomBorder);
-        Assert.Equal(XLBorderStyleValues.Thin, sheet.Cell("D11").Style.Border.BottomBorder);
+        Assert.Equal(XLBorderStyleValues.Thin, sheet.Cell("E11").Style.Border.BottomBorder);
 
         // No InsideBorder/OutsideBorder blanket was ever applied over the
         // data area — the header row (3) alone keeps its own full thin
         // border, distinct from the constructive per-edge data-area borders.
         Assert.Equal(XLBorderStyleValues.Thin, sheet.Cell("A3").Style.Border.TopBorder);
         Assert.Equal(XLBorderStyleValues.Thin, sheet.Cell("A3").Style.Border.BottomBorder);
-        Assert.Equal(XLBorderStyleValues.Thin, sheet.Cell("D3").Style.Border.RightBorder);
+        Assert.Equal(XLBorderStyleValues.Thin, sheet.Cell("E3").Style.Border.RightBorder);
     }
 
     [Fact]
@@ -320,7 +333,7 @@ public sealed class ExcelExportTests
 
         Assert.Equal("BIZ UDPゴシック", sheet.Cell("A1").Style.Font.FontName);
         Assert.Equal("BIZ UDPゴシック", sheet.Cell("A4").Style.Font.FontName);
-        Assert.Equal("BIZ UDPゴシック", sheet.Cell("C4").Style.Font.FontName);
+        Assert.Equal("BIZ UDPゴシック", sheet.Cell("D4").Style.Font.FontName);
     }
 
     [Fact]
@@ -434,8 +447,9 @@ public sealed class ExcelExportTests
         using var workbook = new XLWorkbook(path);
         var sheet = workbook.Worksheet("業務週報");
 
-        Assert.Equal("2026/07/02\n(木)", sheet.Cell("A4").GetString());
-        Assert.Equal("① 月初の活動", sheet.Cell("C4").GetString());
+        Assert.Equal("2026/07/02", sheet.Cell("A4").GetString());
+        Assert.Equal("(木)", sheet.Cell("B4").GetString());
+        Assert.Equal("① 月初の活動", sheet.Cell("D4").GetString());
 
         Assert.Equal(string.Empty, sheet.Cell("A5").GetString());
         Assert.Equal(string.Empty, sheet.Cell("A6").GetString());
@@ -444,13 +458,14 @@ public sealed class ExcelExportTests
         // 7/30 has two items -> two item rows (8-9), each item's 活動内容/結果
         // on its own row, then blanks padding to the uniform minimum of 4
         // rows (10-11).
-        Assert.Equal("2026/07/30\n(木)", sheet.Cell("A8").GetString());
-        Assert.Equal("① 月末の活動その1", sheet.Cell("C8").GetString());
-        Assert.Equal("① 完了", sheet.Cell("D8").GetString());
+        Assert.Equal("2026/07/30", sheet.Cell("A8").GetString());
+        Assert.Equal("(木)", sheet.Cell("B8").GetString());
+        Assert.Equal("① 月末の活動その1", sheet.Cell("D8").GetString());
+        Assert.Equal("① 完了", sheet.Cell("E8").GetString());
 
         Assert.Equal(string.Empty, sheet.Cell("A9").GetString());
-        Assert.Equal("② 月末の活動その2", sheet.Cell("C9").GetString());
-        Assert.Equal(string.Empty, sheet.Cell("D9").GetString());
+        Assert.Equal("② 月末の活動その2", sheet.Cell("D9").GetString());
+        Assert.Equal(string.Empty, sheet.Cell("E9").GetString());
 
         Assert.Equal(string.Empty, sheet.Cell("A10").GetString());
         Assert.Equal(string.Empty, sheet.Cell("A11").GetString());

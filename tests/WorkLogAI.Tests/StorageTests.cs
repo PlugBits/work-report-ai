@@ -41,7 +41,7 @@ public sealed class StorageTests
             tables);
 
         command.CommandText = "PRAGMA user_version;";
-        Assert.Equal(4L, Convert.ToInt64(await command.ExecuteScalarAsync()));
+        Assert.Equal(5L, Convert.ToInt64(await command.ExecuteScalarAsync()));
     }
 
     [Fact]
@@ -90,7 +90,7 @@ public sealed class StorageTests
         Assert.Contains("origin", names);
         Assert.Contains("category", names);
         columns.CommandText = "PRAGMA user_version;";
-        Assert.Equal(4L, Convert.ToInt64(await columns.ExecuteScalarAsync()));
+        Assert.Equal(5L, Convert.ToInt64(await columns.ExecuteScalarAsync()));
     }
 
     [Fact]
@@ -183,7 +183,7 @@ public sealed class StorageTests
 
         await using var version = upgraded.CreateCommand();
         version.CommandText = "PRAGMA user_version;";
-        Assert.Equal(4L, Convert.ToInt64(await version.ExecuteScalarAsync()));
+        Assert.Equal(5L, Convert.ToInt64(await version.ExecuteScalarAsync()));
     }
 
     [Fact]
@@ -281,7 +281,115 @@ public sealed class StorageTests
 
         await using var version = upgraded.CreateCommand();
         version.CommandText = "PRAGMA user_version;";
-        Assert.Equal(4L, Convert.ToInt64(await version.ExecuteScalarAsync()));
+        Assert.Equal(5L, Convert.ToInt64(await version.ExecuteScalarAsync()));
+    }
+
+    [Fact]
+    public async Task Migration_upgrades_a_version_four_database_to_suppressed_source_refs()
+    {
+        using var temporary = new TemporaryDirectory();
+        var path = Path.Combine(temporary.Path, "suppression-upgrade.db");
+        var factory = new SqliteConnectionFactory(new FixedDatabasePathProvider(path));
+        await using (var connection = factory.Create())
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                CREATE TABLE quick_notes (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    created_at TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    deleted_at TEXT NULL
+                );
+                CREATE TABLE source_events (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    occurred_at TEXT NOT NULL,
+                    source_type TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    body TEXT NOT NULL,
+                    evidence TEXT NOT NULL,
+                    source_ref TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    content_hash TEXT NOT NULL,
+                    collected_at TEXT NOT NULL
+                );
+                CREATE TABLE report_candidates (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    week_start TEXT NOT NULL,
+                    work_date TEXT NOT NULL,
+                    work_item TEXT NOT NULL,
+                    activity TEXT NOT NULL,
+                    result_or_next TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    selected INTEGER NOT NULL,
+                    edited INTEGER NOT NULL,
+                    source_event_ids_json TEXT NOT NULL,
+                    needs_confirmation INTEGER NOT NULL DEFAULT 0,
+                    confirmation_question TEXT NULL,
+                    origin TEXT NOT NULL DEFAULT 'local',
+                    category TEXT NOT NULL DEFAULT 'internal'
+                );
+                CREATE TABLE settings (
+                    key TEXT NOT NULL PRIMARY KEY,
+                    value_encrypted TEXT NOT NULL
+                );
+                CREATE TABLE meeting_sessions (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    participants TEXT NOT NULL DEFAULT '',
+                    kind TEXT NOT NULL,
+                    started_at TEXT NOT NULL,
+                    ended_at TEXT NULL,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE meeting_lines (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    session_id TEXT NOT NULL REFERENCES meeting_sessions(id),
+                    line_no INTEGER NOT NULL,
+                    marker TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    logged_at TEXT NOT NULL
+                );
+                CREATE TABLE meeting_summaries (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    session_id TEXT NOT NULL REFERENCES meeting_sessions(id),
+                    formatted_json TEXT NOT NULL,
+                    summary_line TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                PRAGMA user_version = 4;
+                """;
+            await command.ExecuteNonQueryAsync();
+        }
+
+        await new SqliteDatabaseInitializer(factory).InitializeAsync();
+        await new SqliteDatabaseInitializer(factory).InitializeAsync();
+
+        await using var upgraded = factory.Create();
+        await upgraded.OpenAsync();
+        await using var tables = upgraded.CreateCommand();
+        tables.CommandText = """
+            SELECT name
+            FROM sqlite_master
+            WHERE type = 'table'
+              AND name = 'suppressed_source_refs';
+            """;
+        Assert.Equal("suppressed_source_refs", await tables.ExecuteScalarAsync());
+
+        await using var columns = upgraded.CreateCommand();
+        columns.CommandText = "PRAGMA table_info(suppressed_source_refs);";
+        var columnNames = new List<string>();
+        await using (var reader = await columns.ExecuteReaderAsync())
+        {
+            while (await reader.ReadAsync()) columnNames.Add(reader.GetString(1));
+        }
+        Assert.Equal(new[] { "source_ref", "suppressed_at" }, columnNames);
+
+        await using var version = upgraded.CreateCommand();
+        version.CommandText = "PRAGMA user_version;";
+        Assert.Equal(5L, Convert.ToInt64(await version.ExecuteScalarAsync()));
     }
 
     [Fact]
@@ -316,6 +424,32 @@ public sealed class StorageTests
         Assert.Null(Assert.Single(await reopenedRepository.ListAsync(
             createdAt.AddDays(-1),
             createdAt.AddDays(1))).DeletedAt);
+    }
+
+    [Fact]
+    public async Task Notes_update_text_round_trips_rejects_blank_and_reports_unknown_id()
+    {
+        using var temporary = new TemporaryDirectory();
+        var factory = new SqliteConnectionFactory(
+            new FixedDatabasePathProvider(Path.Combine(temporary.Path, "notes-update.db")));
+        await new SqliteDatabaseInitializer(factory).InitializeAsync();
+        var repository = new SqliteQuickNoteRepository(factory);
+        var createdAt = new DateTimeOffset(2026, 7, 30, 9, 15, 0, TimeSpan.FromHours(-4));
+        var created = await repository.CreateAsync("first draft", createdAt);
+
+        Assert.True(await repository.UpdateTextAsync(created.Id, "revised text"));
+        var updated = Assert.Single(await repository.ListAsync(
+            createdAt.AddDays(-1),
+            createdAt.AddDays(1)));
+        Assert.Equal("revised text", updated.Text);
+        Assert.Equal(created.CreatedAt, updated.CreatedAt);
+
+        Assert.False(await repository.UpdateTextAsync(created.Id, "   "));
+        Assert.Equal("revised text", Assert.Single(await repository.ListAsync(
+            createdAt.AddDays(-1),
+            createdAt.AddDays(1))).Text);
+
+        Assert.False(await repository.UpdateTextAsync(Guid.NewGuid(), "unknown id"));
     }
 
     [Fact]

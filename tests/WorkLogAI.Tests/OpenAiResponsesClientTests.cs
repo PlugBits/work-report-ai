@@ -189,6 +189,14 @@ public sealed class OpenAiResponsesClientTests
     }
 
     [Fact]
+    public void Instructions_require_full_manual_memo_coverage_rewriting_and_confirmation()
+    {
+        Assert.Contains("1件も漏らさず", AiPromptBuilder.Instructions);
+        Assert.Contains("書き直す", AiPromptBuilder.Instructions);
+        Assert.Contains("needsConfirmation", AiPromptBuilder.Instructions);
+    }
+
+    [Fact]
     public void Prompt_omits_the_git_file_list_but_keeps_subject_and_statistics()
     {
         var source = SourceEventFactory.Create(

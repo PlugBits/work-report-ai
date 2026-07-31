@@ -86,6 +86,66 @@ public sealed class Phase2PersistenceTests
     }
 
     [Fact]
+    public async Task DeleteBySourceRefsAsync_removes_only_matching_events_and_tolerates_missing_or_empty_refs()
+    {
+        using var temporary = new TemporaryDirectory();
+        var factory = await CreateDatabaseAsync(temporary, "delete-by-ref.db");
+        var repository = new SqliteSourceEventRepository(factory);
+        var occurredAt = new DateTimeOffset(2026, 7, 30, 10, 0, 0, TimeSpan.FromHours(-4));
+        var keep = SourceEventFactory.Create(
+            occurredAt, SourceTypes.Git, "keep", "keep body", "evidence", "git:repo:keep", .9, occurredAt);
+        var remove = SourceEventFactory.Create(
+            occurredAt, SourceTypes.Manual, "remove", "remove body", "evidence",
+            "quick-note:11111111-1111-1111-1111-111111111111", 1, occurredAt);
+        Assert.True(await repository.InsertIfNewAsync(keep));
+        Assert.True(await repository.InsertIfNewAsync(remove));
+
+        Assert.Equal(0, await repository.DeleteBySourceRefsAsync([]));
+        Assert.Equal(0, await repository.DeleteBySourceRefsAsync(["unknown-ref"]));
+
+        var deleted = await repository.DeleteBySourceRefsAsync([remove.SourceRef, "unknown-ref"]);
+
+        Assert.Equal(1, deleted);
+        var remaining = await repository.ListAsync(
+            new WeekRange(new DateOnly(2026, 7, 27), new DateOnly(2026, 8, 2)));
+        Assert.Equal(keep.Id, Assert.Single(remaining).Id);
+    }
+
+    [Fact]
+    public async Task Suppressed_source_refs_round_trip_through_suppress_list_and_unsuppress()
+    {
+        using var temporary = new TemporaryDirectory();
+        var factory = await CreateDatabaseAsync(temporary, "suppression.db");
+        var repository = new SqliteSourceEventRepository(factory);
+        var suppressedAt = new DateTimeOffset(2026, 7, 30, 10, 0, 0, TimeSpan.FromHours(-4));
+
+        Assert.Empty(await repository.ListSuppressedSourceRefsAsync());
+
+        await repository.SuppressSourceRefsAsync(
+            ["quick-note:22222222-2222-2222-2222-222222222222", "  ", string.Empty],
+            suppressedAt);
+        // Re-suppressing an already-suppressed ref (and a brand-new one alongside it)
+        // is INSERT OR IGNORE — no duplicate rows, no error.
+        await repository.SuppressSourceRefsAsync(
+            ["quick-note:22222222-2222-2222-2222-222222222222", "git:repo:abc"],
+            suppressedAt.AddDays(1));
+
+        var suppressed = await repository.ListSuppressedSourceRefsAsync();
+        Assert.Equal(
+            new[] { "git:repo:abc", "quick-note:22222222-2222-2222-2222-222222222222" },
+            suppressed.OrderBy(value => value, StringComparer.Ordinal));
+
+        await repository.UnsuppressSourceRefsAsync(["git:repo:abc"]);
+        Assert.Equal(
+            "quick-note:22222222-2222-2222-2222-222222222222",
+            Assert.Single(await repository.ListSuppressedSourceRefsAsync()));
+
+        // Blank/empty collections are safe no-ops.
+        await repository.UnsuppressSourceRefsAsync([]);
+        Assert.Single(await repository.ListSuppressedSourceRefsAsync());
+    }
+
+    [Fact]
     public async Task ListIdsOlderThanAsync_returns_only_events_strictly_before_the_cutoff()
     {
         using var temporary = new TemporaryDirectory();
@@ -425,6 +485,53 @@ public sealed class Phase2PersistenceTests
         Assert.Equal(1, result.CandidateCount);
         Assert.Equal(fresh.Id, Assert.Single(loaded.SourceEventIds));
         Assert.Contains("fresh summary", loaded.Activity);
+    }
+
+    [Fact]
+    public async Task Coordinator_never_inserts_or_maps_a_suppressed_source_ref_but_leaves_others_unaffected()
+    {
+        using var temporary = new TemporaryDirectory();
+        var factory = await CreateDatabaseAsync(temporary, "coordinator-suppressed.db");
+        var sources = new SqliteSourceEventRepository(factory);
+        var candidates = new SqliteReportCandidateRepository(factory);
+        var range = new WeekRange(new DateOnly(2026, 7, 27), new DateOnly(2026, 8, 2));
+        var occurredAt = new DateTimeOffset(2026, 7, 30, 9, 0, 0, TimeSpan.FromHours(-4));
+        var suppressedEvent = SourceEventFactory.Create(
+            occurredAt, SourceTypes.Git, "git commit", "changed: a.txt", "commit=abc",
+            "git:repo:suppressed", .9, occurredAt);
+        var keptEvent = SourceEventFactory.Create(
+            occurredAt, SourceTypes.Git, "git commit", "changed: b.txt", "commit=def",
+            "git:repo:kept", .9, occurredAt);
+        // Belt and braces: a suppressed ref that is somehow already stored (e.g. it
+        // was inserted before the suppression existed) must never map either.
+        var alreadyStoredSuppressed = SourceEventFactory.Create(
+            occurredAt, SourceTypes.Manual, "quick note", "old text", "evidence",
+            "quick-note:33333333-3333-3333-3333-333333333333", 1, occurredAt);
+        Assert.True(await sources.InsertIfNewAsync(alreadyStoredSuppressed));
+        await sources.SuppressSourceRefsAsync(
+            [suppressedEvent.SourceRef, alreadyStoredSuppressed.SourceRef],
+            occurredAt);
+
+        var coordinator = new LocalCollectionCoordinator(
+            [new FixedCollector(suppressedEvent), new FixedCollector(keptEvent)],
+            sources,
+            candidates,
+            new LocalSourceEventMapper());
+
+        var result = await coordinator.RunAsync(range);
+
+        Assert.Equal(1, result.InsertedEvents);
+        var storedRefs = (await sources.ListAsync(range)).Select(item => item.SourceRef).ToArray();
+        Assert.DoesNotContain(suppressedEvent.SourceRef, storedRefs);
+        Assert.Contains(keptEvent.SourceRef, storedRefs);
+        Assert.Contains(alreadyStoredSuppressed.SourceRef, storedRefs); // deleted rows aren't this coordinator's job
+
+        var mappedRefs = (await candidates.ListAsync(range.Start))
+            .SelectMany(item => item.SourceEventIds)
+            .ToArray();
+        Assert.DoesNotContain(alreadyStoredSuppressed.Id, mappedRefs);
+        Assert.DoesNotContain(suppressedEvent.Id, mappedRefs);
+        Assert.Contains(keptEvent.Id, mappedRefs);
     }
 
     [Fact]

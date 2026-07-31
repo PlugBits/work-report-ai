@@ -81,16 +81,17 @@ public sealed class ClosedXmlWeeklyReportExporter : IWeeklyReportExporter
 
         sheet.Range("A1:C1").Merge();
         sheet.Cell("A1").Value = titleText;
-        sheet.Cell("D1").Value = identity.CompanyName;
-        sheet.Cell("D2").Value = identity.EmployeeName;
-        sheet.Range("A1:D2").Style.Font.Bold = true;
-        sheet.Range("A1:D2").Style.Font.FontSize = 12;
-        sheet.Range("A1:D2").Style.Font.FontName = FontName;
-        sheet.Range("D1:D2").Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Left;
+        sheet.Cell("E1").Value = identity.CompanyName;
+        sheet.Cell("E2").Value = identity.EmployeeName;
+        sheet.Range("A1:E2").Style.Font.Bold = true;
+        sheet.Range("A1:E2").Style.Font.FontSize = 12;
+        sheet.Range("A1:E2").Style.Font.FontName = FontName;
+        sheet.Range("E1:E2").Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Left;
 
         var headers = new[]
         {
-            "日時",
+            "日付",
+            "曜日",
             "項目/案件・目標金額",
             "活動内容",
             "結果・決定事項/今後の課題"
@@ -100,7 +101,7 @@ public sealed class ClosedXmlWeeklyReportExporter : IWeeklyReportExporter
             sheet.Cell(3, column).Value = headers[column - 1];
         }
 
-        var headerRange = sheet.Range("A3:D3");
+        var headerRange = sheet.Range("A3:E3");
         headerRange.Style.Font.Bold = true;
         headerRange.Style.Font.FontColor = XLColor.White;
         headerRange.Style.Font.FontName = FontName;
@@ -129,18 +130,18 @@ public sealed class ClosedXmlWeeklyReportExporter : IWeeklyReportExporter
 
                 if (itemIndex == 0)
                 {
-                    // The date/weekday cell appears once, on the block's
+                    // The date and weekday cells appear once, on the block's
                     // first row only; every other row in the block leaves
-                    // column A empty.
-                    sheet.Cell(rowNumber, 1).Value =
-                        $"{day.Date:yyyy/MM/dd}\n({JapaneseWeekday(day.Date.DayOfWeek)})";
+                    // columns A and B empty.
+                    sheet.Cell(rowNumber, 1).Value = $"{day.Date:yyyy/MM/dd}";
+                    sheet.Cell(rowNumber, 2).Value = $"({JapaneseWeekday(day.Date.DayOfWeek)})";
                 }
 
-                sheet.Cell(rowNumber, 2).Value = $"{label} {item.WorkItem}";
-                sheet.Cell(rowNumber, 3).Value = $"{label} {item.Activity}";
+                sheet.Cell(rowNumber, 3).Value = $"{label} {item.WorkItem}";
+                sheet.Cell(rowNumber, 4).Value = $"{label} {item.Activity}";
                 if (!string.IsNullOrWhiteSpace(item.ResultOrNext))
                 {
-                    sheet.Cell(rowNumber, 4).Value = $"{label} {item.ResultOrNext}";
+                    sheet.Cell(rowNumber, 5).Value = $"{label} {item.ResultOrNext}";
                 }
 
                 rowNumber++;
@@ -162,9 +163,9 @@ public sealed class ClosedXmlWeeklyReportExporter : IWeeklyReportExporter
 
         var lastRow = Math.Max(3, rowNumber - 1);
 
-        var reportRange = sheet.Range(3, 1, lastRow, 4);
-        sheet.Range(1, 1, lastRow, 4).Style.Alignment.WrapText = true;
-        sheet.Range(1, 1, lastRow, 4).Style.Font.FontName = FontName;
+        var reportRange = sheet.Range(3, 1, lastRow, 5);
+        sheet.Range(1, 1, lastRow, 5).Style.Alignment.WrapText = true;
+        sheet.Range(1, 1, lastRow, 5).Style.Font.FontName = FontName;
         reportRange.Style.Alignment.Vertical = XLAlignmentVerticalValues.Top;
 
         // Constructive borders: draw only the lines that are actually
@@ -175,12 +176,12 @@ public sealed class ClosedXmlWeeklyReportExporter : IWeeklyReportExporter
         // built here from nothing.
         if (lastRow >= 4)
         {
-            // Vertical lines: a left edge on every column A-D (i.e. the
-            // three internal dividers plus the table's outer left edge) and
-            // the table's outer right edge on column D, continuous for
+            // Vertical lines: a left edge on every column A-E (i.e. the
+            // four internal dividers plus the table's outer left edge) and
+            // the table's outer right edge on column E, continuous for
             // every row of every block — items and blanks alike.
-            sheet.Range(4, 1, lastRow, 4).Style.Border.LeftBorder = XLBorderStyleValues.Thin;
-            sheet.Range(4, 4, lastRow, 4).Style.Border.RightBorder = XLBorderStyleValues.Thin;
+            sheet.Range(4, 1, lastRow, 5).Style.Border.LeftBorder = XLBorderStyleValues.Thin;
+            sheet.Range(4, 5, lastRow, 5).Style.Border.RightBorder = XLBorderStyleValues.Thin;
 
             // Horizontal lines: only the last row of each day block gets a
             // bottom edge — the boundary before the next day (and, for the
@@ -189,20 +190,21 @@ public sealed class ClosedXmlWeeklyReportExporter : IWeeklyReportExporter
             // rows, not around blank rows.
             foreach (var blockLastRow in blockLastRows)
             {
-                sheet.Range(blockLastRow, 1, blockLastRow, 4).Style.Border.BottomBorder = XLBorderStyleValues.Thin;
+                sheet.Range(blockLastRow, 1, blockLastRow, 5).Style.Border.BottomBorder = XLBorderStyleValues.Thin;
             }
         }
 
         sheet.Column(1).Width = 20.14; // 146 px
-        sheet.Column(2).Width = 39.71; // 283 px
-        sheet.Column(3).Width = 69.29; // 490 px
-        sheet.Column(4).Width = 60.14; // 426 px
+        sheet.Column(2).Width = 7.0;   // ~54 px
+        sheet.Column(3).Width = 39.71; // 283 px
+        sheet.Column(4).Width = 69.29; // 490 px
+        sheet.Column(5).Width = 60.14; // 426 px
         sheet.Rows(1, lastRow).AdjustToContents();
 
         sheet.PageSetup.PageOrientation = XLPageOrientation.Landscape;
         sheet.PageSetup.PagesWide = 1;
         sheet.PageSetup.PagesTall = 0;
-        sheet.PageSetup.PrintAreas.Add($"A1:D{lastRow}");
+        sheet.PageSetup.PrintAreas.Add($"A1:E{lastRow}");
         sheet.SheetView.FreezeRows(3);
 
         workbook.SaveAs(path);
