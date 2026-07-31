@@ -381,7 +381,10 @@ Embedded SQL migrations run in version order inside a transaction according to
 `002_phase3_review.sql` upgrades existing Phase 1–2 databases without rewriting the
 initial migration, `003_meeting_mode.sql` adds the three 議事録モード tables, and
 `004_report_category.sql` (schema v4) adds `report_candidates.category` (社内/社外,
-default `internal`) for the review-time category selector:
+default `internal`). The column, model field, and repository mapping remain in
+place, but the product surface no longer exposes or reads it: there is no
+review-time category selector, and the exporter no longer groups or labels by
+it — the stored value is dormant data carried through unchanged:
 
 - `quick_notes`
 - `source_events`
@@ -505,33 +508,33 @@ the earlier single "company / employee" title cell). Row 3 is the header row
 (日時/項目・案件・目標金額/活動内容/結果・決定事項・今後の課題) with a blue fill and
 white bold text (replacing the earlier light-gray header). `WorkLogAI.Core`'s
 pure `DailyReportGrouper` groups the already-filtered, chronologically sorted
-`ReportRow`s into one `DailyReportRow` per (calendar day, 社内/社外 category) pair —
-so a day with both categories selected produces two independently numbered
-rows, internal before external — and numbers each group's items in arrival order
+`ReportRow`s into one `DailyReportRow` per calendar day — `ReportRow.Category`
+plays no part in grouping — and numbers each day's items in arrival order
 (circled digits ①–⑳ via `DailyReportGrouper.CircledNumber`, falling back to
-`(21)`, `(22)`, … beyond that); the exporter renders exactly one sheet row per
-group from that grouping — never one row per `ReportRow` — with the 日時 cell
-holding three stacked lines (社内 or 社外 per the row's category, the date, and
-the employee's surname), the 項目/活動内容 cells holding one numbered line per
-item, and the 結果・決定事項 cell holding only the numbered items whose result
-text is non-blank. Rows are wrapped, bordered, and configured for landscape
-printing at one page wide; the data area has no merged cells now that grouping
-happens by day rather than by consecutive same-date rows. The worksheet's
-default font is set to BIZ UDPゴシック right after worksheet creation and again
-explicitly on the title, header, and data ranges; it ships with Windows 10
-1809+ and Windows 11, so no separate install is needed. Between each pair of
-consecutive `DailyReportRow`s whose `Date` differs, the render core inserts one
-completely empty spacer row — same-date 社内/社外 rows stay adjacent with no
-spacer between them. A single blanket border range covers the header plus the
-entire data area, spacer rows included, so the grid never breaks; after that
-blanket pass, each spacer row's top edge and the preceding date's last content
-row's bottom edge are individually cleared back to no border, so the spacer
-visually merges into the block above it while its own bottom edge (the
-boundary before the next date) and left/right edges stay thin. Spacer rows
-get no explicit height, so they stay ordinary rows that `AdjustToContents` and
-any later manual auto-fit re-run in Excel size like any other empty row. Print
-area and freeze-row math account for the extra spacer rows automatically since
-they are folded into the same running row counter as the data rows.
+`(21)`, `(22)`, … beyond that); the exporter renders exactly one sheet content
+row per `DailyReportRow` — never one row per `ReportRow` — with the 日時 cell
+holding exactly two stacked lines (the date and, in parentheses, the
+single-character Japanese weekday, e.g. `(月)`), the 項目/活動内容 cells holding
+one numbered line per item, and the 結果・決定事項 cell holding only the
+numbered items whose result text is non-blank. Rows are wrapped, bordered, and
+configured for landscape printing at one page wide; the data area has no
+merged cells. The worksheet's default font is set to BIZ UDPゴシック right
+after worksheet creation and again explicitly on the title, header, and data
+ranges; it ships with Windows 10 1809+ and Windows 11, so no separate install
+is needed. Every day's block — its content row plus enough blank rows to pad
+it to a uniform minimum of 4 sheet rows — occupies the same visual size
+regardless of item count; every date gets this treatment, including the last
+one. A single blanket border range covers the header plus the entire data
+area, blank rows included, so the grid never breaks; after that blanket pass,
+each block's internal row boundaries (content-to-first-blank, and each pair of
+consecutive blanks) are individually cleared back to no border on both
+adjacent edges, so the block reads as one continuous visual region, while its
+own bottom edge (the last blank row's bottom border — the boundary before the
+next day's block) and left/right edges stay thin. Blank rows get no explicit
+height, so they stay ordinary rows that `AdjustToContents` and any later
+manual auto-fit re-run in Excel size like any other empty row. Print area and
+freeze-row math account for the extra blank rows automatically since they are
+folded into the same running row counter as the data rows.
 
 `ClosedXmlWeeklyReportExporter.ExportAsync` and the newer `ExportMonthAsync` share
 one private `RenderAsync(titleText, fileName, rows, outputDirectory, identity, ct)`

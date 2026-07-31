@@ -36,24 +36,26 @@ public sealed class ExcelExportTests
             new[] { "日時", "項目/案件・目標金額", "活動内容", "結果・決定事項/今後の課題" },
             sheet.Range("A3:D3").Cells().Select(cell => cell.GetString()).ToArray());
 
-        Assert.Equal("社内\n2026/07/28\n山田", sheet.Cell("A4").GetString());
+        // Day cell is exactly two lines: the date, then the single-character
+        // Japanese weekday in parentheses. 2026/07/28 is a Tuesday.
+        Assert.Equal("2026/07/28\n(火)", sheet.Cell("A4").GetString());
         Assert.Equal("① 最初", sheet.Cell("C4").GetString());
 
-        // Different-date spacer row: completely empty but still part of the
-        // continuous bordered grid, like every other row. Its top edge merges
-        // with the preceding date's block (no line), while its own bottom
-        // edge — the boundary before the next date — stays.
-        Assert.Equal(string.Empty, sheet.Cell("A5").GetString());
-        Assert.Equal(XLBorderStyleValues.Thin, sheet.Cell("A5").Style.Border.LeftBorder);
-        Assert.Equal(XLBorderStyleValues.None, sheet.Cell("A4").Style.Border.BottomBorder);
-        Assert.Equal(XLBorderStyleValues.None, sheet.Cell("A5").Style.Border.TopBorder);
-        Assert.Equal(XLBorderStyleValues.Thin, sheet.Cell("A5").Style.Border.BottomBorder);
+        // Each day block is a uniform 4 rows (content row + 3 blanks), so the
+        // second date's content row starts exactly 4 rows after the first.
+        // 2026/07/30 is a Thursday.
+        Assert.Equal("2026/07/30\n(木)", sheet.Cell("A8").GetString());
+        Assert.Equal("① 二番目", sheet.Cell("C8").GetString());
 
-        Assert.Equal("社内\n2026/07/30\n山田", sheet.Cell("A6").GetString());
-        Assert.Equal("① 二番目", sheet.Cell("C6").GetString());
+        Assert.Equal(string.Empty, sheet.Cell("A5").GetString());
+        Assert.Equal(string.Empty, sheet.Cell("A6").GetString());
+        Assert.Equal(string.Empty, sheet.Cell("A7").GetString());
+        Assert.Equal(string.Empty, sheet.Cell("A9").GetString());
+        Assert.Equal(string.Empty, sheet.Cell("A10").GetString());
+        Assert.Equal(string.Empty, sheet.Cell("A11").GetString());
 
         Assert.All(
-            sheet.Range("A3:D6").Cells(),
+            sheet.Range("A3:D11").Cells(),
             cell => Assert.True(cell.Style.Alignment.WrapText));
         Assert.Equal(XLPageOrientation.Landscape, sheet.PageSetup.PageOrientation);
         Assert.Equal(1, sheet.PageSetup.PagesWide);
@@ -111,66 +113,25 @@ public sealed class ExcelExportTests
         using var workbook = new XLWorkbook(path);
         var sheet = workbook.Worksheet("業務週報");
 
-        // Two calendar days -> two data rows, not three, separated by one blank spacer row.
-        Assert.Equal("社内\n2026/07/28\n山田", sheet.Cell("A4").GetString());
+        // Two calendar days -> two content rows, each starting its own
+        // uniform 4-row block.
+        Assert.Equal("2026/07/28\n(火)", sheet.Cell("A4").GetString());
         Assert.Equal("① 案件A\n② 案件B", sheet.Cell("B4").GetString());
         Assert.Equal("① 最初の活動\n② 二番目の活動", sheet.Cell("C4").GetString());
         Assert.Equal("② 完了", sheet.Cell("D4").GetString());
 
         Assert.Equal(string.Empty, sheet.Cell("A5").GetString());
-
-        Assert.Equal("社内\n2026/07/30\n山田", sheet.Cell("A6").GetString());
-        Assert.Equal("① 案件C", sheet.Cell("B6").GetString());
-        Assert.Equal("① 三番目の活動", sheet.Cell("C6").GetString());
-        Assert.Equal(string.Empty, sheet.Cell("D6").GetString());
-
+        Assert.Equal(string.Empty, sheet.Cell("A6").GetString());
         Assert.Equal(string.Empty, sheet.Cell("A7").GetString());
-    }
 
-    [Fact]
-    public async Task Export_omits_surname_line_when_employee_name_is_blank()
-    {
-        using var temporary = new TemporaryDirectory();
-        var exporter = new ClosedXmlWeeklyReportExporter();
-        var range = new WeekRange(new DateOnly(2026, 7, 27), new DateOnly(2026, 8, 2));
-        var rows = new[]
-        {
-            new ReportRow(new DateOnly(2026, 7, 28), "手動メモ", "最初", "")
-        };
+        Assert.Equal("2026/07/30\n(木)", sheet.Cell("A8").GetString());
+        Assert.Equal("① 案件C", sheet.Cell("B8").GetString());
+        Assert.Equal("① 三番目の活動", sheet.Cell("C8").GetString());
+        Assert.Equal(string.Empty, sheet.Cell("D8").GetString());
 
-        var path = await exporter.ExportAsync(
-            range,
-            rows,
-            temporary.Path,
-            new ReportIdentity("サンプル株式会社", "  "));
-
-        using var workbook = new XLWorkbook(path);
-        var sheet = workbook.Worksheet("業務週報");
-
-        Assert.Equal("社内\n2026/07/28", sheet.Cell("A4").GetString());
-    }
-
-    [Fact]
-    public async Task Export_uses_only_first_token_of_employee_name_as_surname()
-    {
-        using var temporary = new TemporaryDirectory();
-        var exporter = new ClosedXmlWeeklyReportExporter();
-        var range = new WeekRange(new DateOnly(2026, 7, 27), new DateOnly(2026, 8, 2));
-        var rows = new[]
-        {
-            new ReportRow(new DateOnly(2026, 7, 28), "手動メモ", "最初", "")
-        };
-
-        var path = await exporter.ExportAsync(
-            range,
-            rows,
-            temporary.Path,
-            new ReportIdentity("サンプル株式会社", "田中"));
-
-        using var workbook = new XLWorkbook(path);
-        var sheet = workbook.Worksheet("業務週報");
-
-        Assert.Equal("社内\n2026/07/28\n田中", sheet.Cell("A4").GetString());
+        Assert.Equal(string.Empty, sheet.Cell("A9").GetString());
+        Assert.Equal(string.Empty, sheet.Cell("A10").GetString());
+        Assert.Equal(string.Empty, sheet.Cell("A11").GetString());
     }
 
     [Fact]
@@ -207,15 +168,15 @@ public sealed class ExcelExportTests
     }
 
     [Fact]
-    public async Task Export_splits_a_mixed_day_into_separate_internal_and_external_rows()
+    public async Task Export_uses_uniform_four_row_day_blocks_with_open_internal_borders()
     {
         using var temporary = new TemporaryDirectory();
         var exporter = new ClosedXmlWeeklyReportExporter();
         var range = new WeekRange(new DateOnly(2026, 7, 27), new DateOnly(2026, 8, 2));
         var rows = new[]
         {
-            new ReportRow(new DateOnly(2026, 7, 28), "社内案件", "社内活動", ""),
-            new ReportRow(new DateOnly(2026, 7, 28), "社外案件", "社外活動", "", ReportCategories.External)
+            new ReportRow(new DateOnly(2026, 7, 28), "案件A", "活動A", ""),
+            new ReportRow(new DateOnly(2026, 7, 30), "案件B", "活動B", "")
         };
 
         var path = await exporter.ExportAsync(
@@ -227,66 +188,58 @@ public sealed class ExcelExportTests
         using var workbook = new XLWorkbook(path);
         var sheet = workbook.Worksheet("業務週報");
 
-        Assert.Equal("社内\n2026/07/28\n山田", sheet.Cell("A4").GetString());
-        Assert.Equal("① 社内案件", sheet.Cell("B4").GetString());
-        Assert.Equal("社外\n2026/07/28\n山田", sheet.Cell("A5").GetString());
-        Assert.Equal("① 社外案件", sheet.Cell("B5").GetString());
-        Assert.Equal(string.Empty, sheet.Cell("A6").GetString());
-    }
-
-    [Fact]
-    public async Task Export_inserts_one_blank_spacer_row_between_dates_but_none_within_a_mixed_day()
-    {
-        using var temporary = new TemporaryDirectory();
-        var exporter = new ClosedXmlWeeklyReportExporter();
-        var range = new WeekRange(new DateOnly(2026, 7, 27), new DateOnly(2026, 8, 2));
-        var rows = new[]
+        // First day's block: content row 4, blank rows 5-7. Every internal
+        // boundary within the block has both adjacent edges cleared to
+        // None, so the block reads as one continuous visual region.
+        foreach (var boundary in new[] { (Upper: 4, Lower: 5), (Upper: 5, Lower: 6), (Upper: 6, Lower: 7) })
         {
-            new ReportRow(new DateOnly(2026, 7, 28), "社内案件", "社内活動", ""),
-            new ReportRow(new DateOnly(2026, 7, 28), "社外案件", "社外活動", "", ReportCategories.External),
-            new ReportRow(new DateOnly(2026, 7, 30), "手動メモ", "三番目", "")
-        };
+            Assert.Equal(
+                XLBorderStyleValues.None,
+                sheet.Cell(boundary.Upper, 1).Style.Border.BottomBorder);
+            Assert.Equal(
+                XLBorderStyleValues.None,
+                sheet.Cell(boundary.Lower, 1).Style.Border.TopBorder);
+            Assert.Equal(
+                XLBorderStyleValues.None,
+                sheet.Cell(boundary.Upper, 4).Style.Border.BottomBorder);
+            Assert.Equal(
+                XLBorderStyleValues.None,
+                sheet.Cell(boundary.Lower, 4).Style.Border.TopBorder);
+        }
 
-        var path = await exporter.ExportAsync(
-            range,
-            rows,
-            temporary.Path,
-            new ReportIdentity("サンプル株式会社", "山田 太郎"));
+        // The block's own bottom edge (last blank row, 7) stays Thin — the
+        // boundary before the next day's block.
+        Assert.Equal(XLBorderStyleValues.Thin, sheet.Cell("A7").Style.Border.BottomBorder);
+        Assert.Equal(XLBorderStyleValues.Thin, sheet.Cell("D7").Style.Border.BottomBorder);
 
-        using var workbook = new XLWorkbook(path);
-        var sheet = workbook.Worksheet("業務週報");
-
-        // Same-date 社内/社外 pair (rows 4-5) stays adjacent: no spacer between them,
-        // and the internal line between them is untouched.
-        Assert.Equal("社内\n2026/07/28\n山田", sheet.Cell("A4").GetString());
-        Assert.Equal("社外\n2026/07/28\n山田", sheet.Cell("A5").GetString());
-        Assert.NotEqual(XLBorderStyleValues.None, sheet.Cell("A5").Style.Border.LeftBorder);
-        Assert.Equal(XLBorderStyleValues.Thin, sheet.Cell("A4").Style.Border.BottomBorder);
-        Assert.Equal(XLBorderStyleValues.Thin, sheet.Cell("A5").Style.Border.TopBorder);
-
-        // Exactly one blank spacer row (row 6) before the next date. It is an
-        // ordinary row within the continuous bordered grid: fully bordered on
-        // its left/right/bottom edges, completely empty cells, and no forced
-        // height (so post-export auto-fit treats it like any other empty
-        // row). Its top edge — and the previous date's last content row's
-        // bottom edge — are cleared so the spacer visually merges with the
-        // block above it; the bottom edge (the boundary before the next
-        // date) stays.
-        Assert.Equal(string.Empty, sheet.Cell("A6").GetString());
-        Assert.Equal(string.Empty, sheet.Cell("B6").GetString());
-        Assert.Equal(string.Empty, sheet.Cell("C6").GetString());
-        Assert.Equal(string.Empty, sheet.Cell("D6").GetString());
+        // Left/right borders on the blank rows are untouched by the
+        // internal-edge clearing and remain Thin from the blanket range.
+        Assert.Equal(XLBorderStyleValues.Thin, sheet.Cell("A5").Style.Border.LeftBorder);
+        Assert.Equal(XLBorderStyleValues.Thin, sheet.Cell("D5").Style.Border.RightBorder);
         Assert.Equal(XLBorderStyleValues.Thin, sheet.Cell("A6").Style.Border.LeftBorder);
         Assert.Equal(XLBorderStyleValues.Thin, sheet.Cell("D6").Style.Border.RightBorder);
-        Assert.Equal(XLBorderStyleValues.None, sheet.Cell("A5").Style.Border.BottomBorder);
-        Assert.Equal(XLBorderStyleValues.None, sheet.Cell("A6").Style.Border.TopBorder);
-        Assert.Equal(XLBorderStyleValues.Thin, sheet.Cell("A6").Style.Border.BottomBorder);
-        Assert.True(sheet.Row(6).Height >= 10);
+        Assert.Equal(XLBorderStyleValues.Thin, sheet.Cell("A7").Style.Border.LeftBorder);
+        Assert.Equal(XLBorderStyleValues.Thin, sheet.Cell("D7").Style.Border.RightBorder);
 
-        Assert.Equal("社内\n2026/07/30\n山田", sheet.Cell("A7").GetString());
-        Assert.Equal("① 手動メモ", sheet.Cell("B7").GetString());
-        Assert.Equal("① 三番目", sheet.Cell("C7").GetString());
-        Assert.Equal(string.Empty, sheet.Cell("A8").GetString());
+        // Blank rows remain completely empty.
+        Assert.Equal(string.Empty, sheet.Cell("A5").GetString());
+        Assert.Equal(string.Empty, sheet.Cell("B5").GetString());
+        Assert.Equal(string.Empty, sheet.Cell("C5").GetString());
+        Assert.Equal(string.Empty, sheet.Cell("D5").GetString());
+
+        // Second (last) day gets the same uniform treatment, including its
+        // own trailing blanks — every date's block is uniform.
+        Assert.Equal("2026/07/30\n(木)", sheet.Cell("A8").GetString());
+        foreach (var boundary in new[] { (Upper: 8, Lower: 9), (Upper: 9, Lower: 10), (Upper: 10, Lower: 11) })
+        {
+            Assert.Equal(
+                XLBorderStyleValues.None,
+                sheet.Cell(boundary.Upper, 1).Style.Border.BottomBorder);
+            Assert.Equal(
+                XLBorderStyleValues.None,
+                sheet.Cell(boundary.Lower, 1).Style.Border.TopBorder);
+        }
+        Assert.Equal(XLBorderStyleValues.Thin, sheet.Cell("A11").Style.Border.BottomBorder);
     }
 
     [Fact]
@@ -425,40 +378,15 @@ public sealed class ExcelExportTests
         using var workbook = new XLWorkbook(path);
         var sheet = workbook.Worksheet("業務週報");
 
-        Assert.Equal("社内\n2026/07/02\n山田", sheet.Cell("A4").GetString());
+        Assert.Equal("2026/07/02\n(木)", sheet.Cell("A4").GetString());
         Assert.Equal("① 月初の活動", sheet.Cell("C4").GetString());
 
         Assert.Equal(string.Empty, sheet.Cell("A5").GetString());
+        Assert.Equal(string.Empty, sheet.Cell("A6").GetString());
+        Assert.Equal(string.Empty, sheet.Cell("A7").GetString());
 
-        Assert.Equal("社内\n2026/07/30\n山田", sheet.Cell("A6").GetString());
-        Assert.Equal("① 月末の活動その1\n② 月末の活動その2", sheet.Cell("C6").GetString());
-        Assert.Equal("① 完了", sheet.Cell("D6").GetString());
-    }
-
-    [Fact]
-    public async Task ExportMonthAsync_still_splits_a_mixed_day_into_internal_and_external_rows()
-    {
-        using var temporary = new TemporaryDirectory();
-        var exporter = new ClosedXmlWeeklyReportExporter();
-        var rows = new[]
-        {
-            new ReportRow(new DateOnly(2026, 7, 15), "社内案件", "社内活動", ""),
-            new ReportRow(new DateOnly(2026, 7, 15), "社外案件", "社外活動", "", ReportCategories.External)
-        };
-
-        var path = await exporter.ExportMonthAsync(
-            2026,
-            7,
-            rows,
-            temporary.Path,
-            new ReportIdentity("サンプル株式会社", "山田 太郎"));
-
-        using var workbook = new XLWorkbook(path);
-        var sheet = workbook.Worksheet("業務週報");
-
-        Assert.Equal("社内\n2026/07/15\n山田", sheet.Cell("A4").GetString());
-        Assert.Equal("① 社内案件", sheet.Cell("B4").GetString());
-        Assert.Equal("社外\n2026/07/15\n山田", sheet.Cell("A5").GetString());
-        Assert.Equal("① 社外案件", sheet.Cell("B5").GetString());
+        Assert.Equal("2026/07/30\n(木)", sheet.Cell("A8").GetString());
+        Assert.Equal("① 月末の活動その1\n② 月末の活動その2", sheet.Cell("C8").GetString());
+        Assert.Equal("① 完了", sheet.Cell("D8").GetString());
     }
 }

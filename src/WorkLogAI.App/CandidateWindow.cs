@@ -307,14 +307,6 @@ public sealed class CandidateWindow : Window
         _ => "?"
     };
 
-    private static readonly CategoryOption[] CategoryOptions =
-    [
-        new CategoryOption("社内", ReportCategories.Internal),
-        new CategoryOption("社外", ReportCategories.External)
-    ];
-
-    private sealed record CategoryOption(string Label, string Value);
-
     private Border CreateCard(CandidateEditor item)
     {
         var panel = new StackPanel();
@@ -351,27 +343,7 @@ public sealed class CandidateWindow : Window
                 Mode = BindingMode.TwoWay,
                 UpdateSourceTrigger = UpdateSourceTrigger.PropertyChanged
             });
-        var statusAndCategory = new StackPanel { Orientation = Orientation.Horizontal };
-        statusAndCategory.Children.Add(Field("状態", status));
-        var category = new ComboBox
-        {
-            ItemsSource = CategoryOptions,
-            SelectedValuePath = "Value",
-            DisplayMemberPath = "Label",
-            Width = 120,
-            HorizontalAlignment = HorizontalAlignment.Left,
-            Margin = new Thickness(10, 0, 0, 0)
-        };
-        category.SetBinding(
-            ComboBox.SelectedValueProperty,
-            new Binding(nameof(item.Category))
-            {
-                Source = item,
-                Mode = BindingMode.TwoWay,
-                UpdateSourceTrigger = UpdateSourceTrigger.PropertyChanged
-            });
-        statusAndCategory.Children.Add(Field("区分", category));
-        panel.Children.Add(statusAndCategory);
+        panel.Children.Add(Field("状態", status));
         panel.Children.Add(new TextBlock
         {
             Text = $"AI確信度: {item.Confidence:P0}",

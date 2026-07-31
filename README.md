@@ -104,11 +104,6 @@ corners) applied consistently across all windows.
 - The weekly review's **Excel出力** checks coverage of selected rows only and, if
   any Monday–Friday day has zero selected candidates, shows a Yes/No confirmation
   listing the blank weekdays before exporting. Weekends never trigger it.
-- Each candidate card has a **区分** (社内/社外) selector next to **状態**,
-  defaulting to 社内 for every source (local, AI-generated, and manually added
-  rows); the user classifies it during review, there is no auto-classification. A
-  day with both 社内 and 社外 rows selected splits into two rows in the exported
-  Excel sheet, each independently numbered ①②③….
 - Exported Excel sheets use **BIZ UDPゴシック** as the base font; it ships with
   Windows 10 version 1809+ and Windows 11, so no separate install is needed on
   a supported machine. The app UI uses a separate font stack — **Noto Sans JP**,
@@ -291,7 +286,7 @@ operational-quality items already implemented (see Usability additions above).
   the pure `MonthOptionBuilder`), then exports every selected candidate whose
   `work_date` falls in that calendar month — spanning any number of weeks — into
   one workbook via `IWeeklyReportExporter.ExportMonthAsync`, reusing the exact
-  per-day/社内-社外 grouped layout `ExportAsync` already produces. The filename is
+  per-day grouped layout `ExportAsync` already produces. The filename is
   `{sanitized report title} 月次 {yyyyMM}.xlsx` and the title cell reads
   `{ReportTitle} {year}年{month}月 月次まとめ`. An empty month shows
   「対象月に採用済みの行がありません。」 instead of writing a file.
@@ -317,7 +312,7 @@ The `WorkLogAI.App` WPF project (`net8.0-windows`) only builds on Windows. On
 non-Windows hosts, build and run `WorkLogAI.Tests` with
 `-p:EnableWindowsTargeting=true`, e.g.
 `dotnet test tests/WorkLogAI.Tests/WorkLogAI.Tests.csproj -p:EnableWindowsTargeting=true`.
-The suite currently has 345 tests.
+The suite currently has 338 tests.
 
 Create the specified self-contained, single-file Windows build with:
 
@@ -375,13 +370,17 @@ submitted weekly report: a title row (A1:C1) plus the company name (D1) and
 employee name (D2) stacked in their own cells, a blue-filled white-bold header
 row with the captions 日時/項目・案件・目標金額/活動内容/結果・決定事項・今後の課題,
 and **one row per calendar day** (only days with at least one selected item).
-Each day's 日時 cell holds three stacked lines — the fixed literal `社内`, the
-date (`yyyy/MM/dd`), and the employee's surname (the first token of the
-configured employee name, omitted if the name is blank). Multiple items on the
-same day are numbered with circled digits (①②③…, falling back to `(21)`,
-`(22)`, … past ①-⑳) so the 項目, 活動内容, and 結果・決定事項 columns line up by
-number; a day's 結果・決定事項 cell lists only the numbered items whose result
-text is non-blank. The title (and the company/employee name shown alongside
+Each day's 日時 cell holds exactly two stacked lines — the date (`yyyy/MM/dd`)
+and the single-character Japanese weekday in parentheses, e.g. `(月)`. Each
+day's block occupies a uniform minimum of 4 sheet rows (the content row plus
+blank rows padding it out), so every day reads as the same visual size
+regardless of item count; the blank rows' internal borders are opened so the
+block reads as one continuous region, with a Thin line only at the boundary
+before the next day. Multiple items on the same day are numbered with circled
+digits (①②③…, falling back to `(21)`, `(22)`, … past ①-⑳) so the 項目, 活動内容,
+and 結果・決定事項 columns line up by number; a day's 結果・決定事項 cell lists
+only the numbered items whose result text is non-blank. The title (and the
+company/employee name shown alongside
 it) are configurable in **設定**.
 
 ## Security
