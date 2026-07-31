@@ -26,7 +26,7 @@ public sealed class CandidateWindow : Window
     private List<CandidateEditor> _items = [];
     private bool _lowConfidenceOnly;
 
-    public CandidateWindow(AppServices services, WeekRange range)
+    public CandidateWindow(AppServices services, WeekRange range, string? statusBanner = null)
     {
         _services = services;
         _range = range;
@@ -57,6 +57,26 @@ public sealed class CandidateWindow : Window
         DockPanel.SetDock(actions, Dock.Top);
         root.Children.Add(actions);
 
+        if (!string.IsNullOrWhiteSpace(statusBanner))
+        {
+            var banner = new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(0xE3, 0xF2, 0xFD)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(0x90, 0xCA, 0xF9)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(4),
+                Padding = new Thickness(10, 8, 10, 8),
+                Margin = new Thickness(0, 0, 0, 10),
+                Child = new TextBlock
+                {
+                    Text = statusBanner,
+                    TextWrapping = TextWrapping.Wrap
+                }
+            };
+            DockPanel.SetDock(banner, Dock.Top);
+            root.Children.Add(banner);
+        }
+
         DockPanel.SetDock(_coverageBar, Dock.Top);
         root.Children.Add(_coverageBar);
 
@@ -77,7 +97,7 @@ public sealed class CandidateWindow : Window
         var sourceEvents = await _services.SourceEvents.GetByIdsAsync(evidenceIds);
         var byId = sourceEvents.ToDictionary(item => item.Id);
         _items = candidates.Select(candidate =>
-            new CandidateEditor(candidate, DescribeEvidence(candidate.SourceEventIds, byId))).ToList();
+            new CandidateEditor(candidate, EvidenceFormatter.Describe(candidate.SourceEventIds, byId))).ToList();
         RenderCards();
     }
 
@@ -263,7 +283,7 @@ public sealed class CandidateWindow : Window
             occurredAt,
             SourceTypes.Manual,
             "レビュー画面で手動追加",
-            "ユーザーが明示的に追加した週報行",
+            "この行はレビュー画面で手動追加されました",
             "ユーザーによる手動追加",
             $"review-manual:{Guid.NewGuid():D}",
             1);
@@ -283,7 +303,7 @@ public sealed class CandidateWindow : Window
             false,
             null,
             CandidateOrigins.Manual);
-        _items.Add(new CandidateEditor(candidate, DescribeEvidence([sourceEvent.Id],
+        _items.Add(new CandidateEditor(candidate, EvidenceFormatter.Describe([sourceEvent.Id],
             new Dictionary<Guid, SourceEvent> { [sourceEvent.Id] = sourceEvent })));
         _lowConfidenceOnly = false;
         RenderCards();
@@ -409,17 +429,6 @@ public sealed class CandidateWindow : Window
         candidates = result;
         return true;
     }
-
-    private static string DescribeEvidence(
-        IReadOnlyList<Guid> ids,
-        IReadOnlyDictionary<Guid, SourceEvent> events) =>
-        string.Join(
-            "\n",
-            ids.Select(id => events.TryGetValue(id, out var source)
-                ? $"{source.OccurredAt:yyyy/MM/dd HH:mm} [{source.SourceType}] " +
-                  $"{SafeTextSanitizer.Sanitize(source.Title, 300)} — " +
-                  $"{SafeTextSanitizer.Sanitize(source.Evidence, 800)}"
-                : $"[{id:D}] 根拠詳細なし"));
 
     private static Button ActionButton(string text, RoutedEventHandler handler)
     {
