@@ -214,6 +214,71 @@ public sealed class SqliteReportCandidateRepository(SqliteConnectionFactory conn
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    public async Task<IReadOnlyList<string>> ListAllSourceEventIdJsonAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var values = new List<string>();
+        await using var connection = connectionFactory.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT source_event_ids_json FROM report_candidates;";
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            values.Add(reader.GetString(0));
+        }
+
+        return values;
+    }
+
+    public async Task<IReadOnlyList<ReportCandidate>> ListSelectedByDateRangeAsync(
+        DateOnly fromInclusive,
+        DateOnly toInclusive,
+        CancellationToken cancellationToken = default)
+    {
+        var candidates = new List<ReportCandidate>();
+        await using var connection = connectionFactory.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT id, week_start, work_date, work_item, activity, result_or_next,
+                   status, confidence, selected, edited, source_event_ids_json,
+                   needs_confirmation, confirmation_question, origin, category
+            FROM report_candidates
+            WHERE selected = 1
+              AND work_date >= $from
+              AND work_date <= $to
+            ORDER BY work_date, id;
+            """;
+        command.Parameters.AddWithValue("$from", fromInclusive.ToString("yyyy-MM-dd"));
+        command.Parameters.AddWithValue("$to", toInclusive.ToString("yyyy-MM-dd"));
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var sourceIds = JsonSerializer.Deserialize<Guid[]>(reader.GetString(10)) ?? [];
+            candidates.Add(new ReportCandidate(
+                Guid.Parse(reader.GetString(0)),
+                DateOnly.Parse(reader.GetString(1)),
+                DateOnly.Parse(reader.GetString(2)),
+                reader.GetString(3),
+                reader.GetString(4),
+                reader.GetString(5),
+                reader.GetString(6),
+                reader.GetDouble(7),
+                reader.GetInt64(8) == 1,
+                reader.GetInt64(9) == 1,
+                sourceIds,
+                reader.GetInt64(11) == 1,
+                reader.IsDBNull(12) ? null : reader.GetString(12),
+                reader.GetString(13),
+                reader.GetString(14)));
+        }
+
+        return candidates;
+    }
+
     private static string EscapeLike(string value) =>
         value
             .Replace("\\", "\\\\", StringComparison.Ordinal)

@@ -61,10 +61,36 @@ public sealed class AppServices
         {
             ErrorLog.Log("AppServices.CandidateTextCleanup", exception);
         }
+        if (!_sampleMode)
+        {
+            try
+            {
+                await new DataRetentionService(SourceEvents, Candidates).RunAsync(DateTimeOffset.Now);
+            }
+            catch (Exception exception)
+            {
+                ErrorLog.Log("AppServices.DataRetention", exception);
+            }
+        }
         if (_sampleMode)
         {
             await new SampleDataSeeder(Notes, SourceEvents, Candidates).SeedIfEmptyAsync();
         }
+    }
+
+    /// <summary>
+    /// Re-runs the same best-effort backup check the startup path uses. Called from
+    /// the tray app's reminder timer once per day so a long-running instance that
+    /// never restarts still gets a weekly backup opportunity. A no-op in sample mode.
+    /// </summary>
+    public void RunDatabaseBackupIfDue()
+    {
+        if (_sampleMode)
+        {
+            return;
+        }
+
+        RunDatabaseBackup();
     }
 
     private void RunDatabaseBackup()

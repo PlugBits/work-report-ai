@@ -6,14 +6,30 @@ namespace WorkLogAI.App;
 
 internal static class ExportResultPrompt
 {
-    public static void OfferToOpen(Window owner, string path)
+    public static void OfferToOpen(Window owner, string path) => OfferToOpen(path, owner);
+
+    /// <summary>
+    /// Owner-less overload for flows with no natural parent window (the tray menu
+    /// itself is not a <see cref="Window"/>), matching the owner-less
+    /// <see cref="MessageBox.Show(string, string, MessageBoxButton, MessageBoxImage)"/>
+    /// pattern already used by <c>App.xaml.cs</c>'s other tray-triggered prompts.
+    /// </summary>
+    public static void OfferToOpen(string path) => OfferToOpen(path, owner: null);
+
+    private static void OfferToOpen(string path, Window? owner)
     {
-        var answer = MessageBox.Show(
-            owner,
-            $"出力しました:\n{path}\nファイルを開きますか？",
-            "WorkLog AI",
-            MessageBoxButton.YesNo,
-            MessageBoxImage.Information);
+        var answer = owner is null
+            ? MessageBox.Show(
+                $"出力しました:\n{path}\nファイルを開きますか？",
+                "WorkLog AI",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Information)
+            : MessageBox.Show(
+                owner,
+                $"出力しました:\n{path}\nファイルを開きますか？",
+                "WorkLog AI",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Information);
         if (answer != MessageBoxResult.Yes)
         {
             return;
@@ -26,12 +42,15 @@ internal static class ExportResultPrompt
         catch (Exception exception)
         {
             ErrorLog.Log("ExportResultPrompt.Open", exception);
-            MessageBox.Show(
-                owner,
-                $"ファイルを開けませんでした。\n{exception.Message}",
-                "WorkLog AI",
-                MessageBoxButton.OK,
-                MessageBoxImage.Error);
+            var message = $"ファイルを開けませんでした。\n{exception.Message}";
+            if (owner is null)
+            {
+                MessageBox.Show(message, "WorkLog AI", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            else
+            {
+                MessageBox.Show(owner, message, "WorkLog AI", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
         }
     }
 }

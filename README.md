@@ -234,6 +234,68 @@ GitHub network APIs, installers, and automatic updates remain intentionally abse
 Auto-start, the local error log, and the weekly database backup are the Phase 5
 operational-quality items already implemented (see Usability additions above).
 
+## Reliability and generation-quality additions
+
+- **AI candidates supersede covered local rows**: after a successful weekly
+  generation, any still-selected, unedited local row (quick memo or meeting
+  summary) whose entire evidence set is now fully covered by the generated AI
+  candidates is automatically deselected via the pure `LocalCandidateSuppressor`,
+  so the raw memo text does not also reach export alongside its AI-shaped
+  replacement. A local row only partially covered stays selected as a safety net.
+  The generation-summary banner reports how many rows were deselected this way
+  (「元メモ由来の行 N件の採用を外しました」).
+- **Latest-event-per-sourceRef reduction**: `SourceEventDeduplicator.LatestPerRef`
+  collapses events that share a stable `sourceRef` (the prime case being a
+  re-formatted meeting summary) down to the newest one — by `CollectedAt`, then
+  `OccurredAt`, then id, deterministically — before both local mapping and the
+  outbound AI prompt see the week's events, so a re-formatted meeting no longer
+  doubles up into two candidates.
+- **OpenAI transient retry**: both the weekly generation client and the meeting
+  AI整形 client route their HTTP call through the shared `TransientRetryPolicy`,
+  which retries a 429, any 5xx, or a transport-level failure up to twice with
+  backoff, honoring a short `Retry-After` header when present. Non-retryable
+  statuses (400/401/403/404) return immediately, unchanged from prior behavior.
+- **APIキーをテスト**: the AI settings tab has a button that probes the configured
+  key with a bare `GET /v1/models` call (`OpenAiKeyProbe`) and reports only
+  ok/unauthorized/network-error — the key itself and any response body are never
+  logged or displayed.
+- **Single-instance guard**: `App.xaml.cs` acquires a named `Mutex`
+  (`WorkLogAI.App.SingleInstance`, with a separate name under `--sample-data`)
+  before any other startup work. A second launch shows a Japanese notice and
+  exits instead of creating a duplicate tray icon and a `Ctrl+Alt+W`/`Ctrl+Alt+M`
+  hotkey conflict; the mutex is released defensively on exit.
+- **Immediate meeting-hotkey apply**: toggling 議事録ホットキー有効化 in settings now
+  calls `App.ApplyMeetingHotKeySetting` on save, which registers or unregisters
+  `Ctrl+Alt+M` on the spot — no restart required, unlike its original behavior.
+- **Tabbed settings**: the settings window is organized into five tabs
+  (基本/収集/AI/Microsoft 365/議事録) instead of one long scrolling column, at a
+  smaller fixed 560×560 size.
+- **Windows CI**: `.github/workflows/ci.yml` builds and tests the full solution —
+  including the WPF `WorkLogAI.App` project, which cannot compile on this
+  repository's Linux dev host — on `windows-latest` for every push and pull
+  request to `main` (`dotnet restore` / `build -c Release` / `test -c Release`).
+- **180-day source-event retention**: `DataRetentionService` runs once at startup
+  (skipped under `--sample-data`) and deletes `source_events` older than 180 days,
+  but only those not referenced by any stored report candidate's evidence list
+  (any week, any origin/edited/selected state) — a source event still backing a
+  kept candidate is never deleted regardless of age. Failures are caught and sent
+  to the error log; retention never blocks startup.
+- **Daily backup due-check**: the weekly SQLite backup previously only had a
+  chance to run at startup, so a tray instance that stays alive for days without
+  restarting could go unprotected. The existing 60-second reminder timer now also
+  checks once per calendar day (via a stored `backup.last_checked_date`, the same
+  pattern as the reminder's last-shown date) and re-invokes the same
+  `DatabaseBackupService.RunIfNeeded` logic, which remains idempotent per week.
+- **Monthly summary export**: tray menu action **月次まとめを出力…** opens a month
+  picker (current month plus the previous 11, `YYYY年M月`, current first, built by
+  the pure `MonthOptionBuilder`), then exports every selected candidate whose
+  `work_date` falls in that calendar month — spanning any number of weeks — into
+  one workbook via `IWeeklyReportExporter.ExportMonthAsync`, reusing the exact
+  per-day/社内-社外 grouped layout `ExportAsync` already produces. The filename is
+  `{sanitized report title} 月次 {yyyyMM}.xlsx` and the title cell reads
+  `{ReportTitle} {year}年{month}月 月次まとめ`. An empty month shows
+  「対象月に採用済みの行がありません。」 instead of writing a file.
+
 ## Requirements and build
 
 - Windows 10 or later
@@ -246,11 +308,16 @@ dotnet test WorkLogAI.sln
 dotnet run --project src/WorkLogAI.App
 ```
 
+`.github/workflows/ci.yml` runs the same restore/build/test sequence on
+`windows-latest` for every push and pull request to `main`, so the WPF `App`
+project actually compiles in CI even though it cannot on this repository's
+Linux dev host.
+
 The `WorkLogAI.App` WPF project (`net8.0-windows`) only builds on Windows. On
 non-Windows hosts, build and run `WorkLogAI.Tests` with
 `-p:EnableWindowsTargeting=true`, e.g.
 `dotnet test tests/WorkLogAI.Tests/WorkLogAI.Tests.csproj -p:EnableWindowsTargeting=true`.
-The suite currently has 239 tests.
+The suite currently has 345 tests.
 
 Create the specified self-contained, single-file Windows build with:
 
@@ -298,6 +365,9 @@ The paths are injectable for tests and future hosting.
    a prompt to open the file appears after a successful export.
 9. Open **今週の記録を見る** to browse notes or manually export the four-column
    Phase 1 report (also offers to open the file after export).
+10. Select **月次まとめを出力…**, pick a month (current or one of the previous 11),
+    to export every already-selected candidate in that month — across all of its
+    weeks — into one workbook (also offers to open the file after export).
 
 The generated file is named
 `業務週報 YYYYMMDD-YYYYMMDD.xlsx` and matches the layout of the user's real
@@ -349,6 +419,17 @@ line text, title, or participants — matching the existing note/candidate/mail
 logging discipline. Only a formatted session's `summary_line` (never raw lines)
 reaches the weekly AI generation prompt, via the same `SourceEvent`
 title/body/evidence fields every other local source already uses.
+
+**APIキーをテスト** (`OpenAiKeyProbe`) is a fifth kind of outbound call, user-
+initiated from settings: a bare `GET /v1/models` with the configured key as a
+bearer token. It reports only ok/unauthorized/network-error and never logs or
+displays the key or any response body.
+
+The 180-day source-event retention (`DataRetentionService`) only ever deletes rows
+from `source_events`; it never deletes a `report_candidates` row and never deletes
+a source event still referenced by any stored candidate's evidence list, so a kept
+weekly or monthly export result can never lose its backing evidence out from under
+it.
 
 See [architecture](docs/ARCHITECTURE.md) and the
 [phase checklist](docs/PHASE_CHECKLIST.md).

@@ -9,15 +9,18 @@
   database dependency.
 - `WorkLogAI.Infrastructure` (`net8.0-windows`) provides SQLite persistence,
   embedded SQL migration, default/injectable database paths, isolated sample-data
-  seeding, ClosedXML export, local Git/Codex/file collectors, Credential Manager
-  interop, bounded prompt construction, the Responses API client, MSAL-based
+  seeding, ClosedXML export (weekly and monthly), local Git/Codex/file collectors,
+  Credential Manager interop, bounded prompt construction, the Responses API
+  client, the shared `TransientRetryPolicy`, `OpenAiKeyProbe`, MSAL-based
   Microsoft Graph sign-in and token caching, the Outlook mail/calendar REST
   collectors, meeting SQLite persistence and Markdown writer, the meeting AI
-  formatting client/payload builder, and the meeting-to-weekly-source collector.
-- `WorkLogAI.App` (`net8.0-windows`) is the WPF tray host. It owns the Win32
-  hotkeys (quick capture and 議事録モード), quick capture, weekly history, the
-  weekday reminder timer, settings, meeting capture/session-chooser/send-preview
-  windows, and UI composition.
+  formatting client/payload builder, the meeting-to-weekly-source collector, and
+  `DataRetentionService`.
+- `WorkLogAI.App` (`net8.0-windows`) is the WPF tray host. It owns the single-
+  instance mutex, the Win32 hotkeys (quick capture and 議事録モード), quick
+  capture, weekly history, the weekday reminder/daily-backup-check timer, the
+  tabbed settings window, the month picker and monthly summary export action,
+  meeting capture/session-chooser/send-preview windows, and UI composition.
 - `WorkLogAI.Tests` verifies boundaries and file output without using the production
   data directory.
 
@@ -120,6 +123,74 @@ candidate count, weekday flag). `CandidateWindow` renders all 7 days every time
 cards are rendered; a day with zero candidates is an interactive button
 (highlighted more strongly for weekdays than weekends) that calls the same manual
 row path as the **1行追加** action, pre-filled with that day's date.
+
+## Post-Phase 3 generation-quality and reliability flow
+
+```text
+AppServices.GenerateAiCandidatesAsync
+      |
+      v
+SourceEventDeduplicator.LatestPerRef(weekly events) -- collapses same-sourceRef
+      |                                                 reruns (e.g. a re-formatted
+      |                                                 meeting) to the newest one
+      v
+AiPromptBuilder / LocalSourceEventMapper only ever see the reduced set
+      |
+      v
+OpenAiResponsesClient.GenerateAsync -- HttpClient send wrapped in
+      |                                 TransientRetryPolicy.ExecuteAsync
+      v
+CandidateMergeService.Merge -> Candidates.SaveGeneratedAsync
+      |
+      v
+LocalCandidateSuppressor.SelectSupersededIds(merged AI candidates, week candidates)
+      |
+      v
+Candidates.SetSelectedAsync(supersededIds, false) -- deselects fully-covered,
+                                                       unedited local rows
+      |
+      v
+CandidateWindow banner reports DeselectedLocalCount
+```
+
+`SourceEventDeduplicator.LatestPerRef` groups events by `SourceRef` (events with a
+blank ref pass through untouched) and keeps only the newest per group, using
+`CollectedAt` then `OccurredAt` then ordinal `Id` as a fully deterministic
+tiebreak so two calls over the same input always agree. It never mutates stored
+rows — both `LocalCollectionCoordinator.RunAsync` (before local mapping) and
+`AiPromptBuilder.Build` (before prompt construction) apply it independently to
+whatever they just read.
+
+`TransientRetryPolicy.ExecuteAsync` wraps one HTTP attempt callback (the caller
+must build a fresh `HttpRequestMessage` per attempt — a message cannot be sent
+twice) and retries a 429, any 5xx, or a transport-level `HttpRequestException`/
+per-attempt `TaskCanceledException` up to `DefaultDelays.Count` (2) more times,
+honoring a bounded `Retry-After` header (delta or date form, capped at 30s) when
+the server sends one and otherwise falling back to the fixed 2s/5s delays. The
+caller's own cancellation is always rethrown rather than retried. Both
+`OpenAiResponsesClient` (weekly generation) and `MeetingFormatClient` (議事録
+AI整形) route their single HTTP send through this shared policy; non-retryable
+statuses (400/401/403/404) return on the first attempt exactly as before the
+policy existed.
+
+`LocalCandidateSuppressor.SelectSupersededIds` unions the evidence (source event
+ids) of every newly generated AI candidate, then scans the week's full candidate
+list for rows that are local-origin, unedited, currently selected, and whose
+entire evidence set is a subset of that union — those ids are returned for
+deselection. A local row only partially covered by AI evidence is left alone, so
+the AI can never silently drop a memo it did not fully account for; manual-origin
+and already-edited rows are never touched regardless of coverage.
+`AppServices.GenerateAiCandidatesAsync` calls it once per successful generation,
+right after `SaveGeneratedAsync`, and folds the deselected count into
+`AiGenerationResult.DeselectedLocalCount`, which `App.xaml.cs` appends to the
+generation-summary banner text.
+
+`OpenAiKeyProbe.ProbeAsync` is a small, independent liveness check: a bare
+`GET /v1/models` with the candidate key as a bearer token and a 10s timeout,
+collapsing every outcome to `Ok`/`Unauthorized`/`NetworkError` — the key and any
+response body never leave the method. The settings AI tab's **APIキーをテスト**
+button calls it against whatever is currently in the key field (or the stored
+credential if the field is blank) and shows only the three-way Japanese result.
 
 ## Phase 4 Microsoft Graph flow
 
@@ -329,15 +400,41 @@ sets `quick_notes.deleted_at`; reopen sets it back to `NULL`.
 Production and sample modes use separate subdirectories under Local Application
 Data. Tests inject temporary database paths.
 
+`DataRetentionService` (`WorkLogAI.Infrastructure`) is the one path that deletes
+`source_events` rows outright, rather than just candidates or notes. It never
+touches `report_candidates`: `AppServices.InitializeAsync` calls
+`RunAsync(DateTimeOffset.Now)` once at startup (skipped under `--sample-data`,
+wrapped in its own try/catch logging to `ErrorLog` under
+`AppServices.DataRetention`), which computes `cutoff = now - 180 days`, asks
+`ISourceEventRepository.ListIdsOlderThanAsync(cutoff)` for candidate ids, asks
+`IReportCandidateRepository.ListAllSourceEventIdJsonAsync()` for every stored
+candidate's raw `source_event_ids_json` (any week, any origin/edited/selected
+state), parses and unions those into a referenced-id set in C#, subtracts it from
+the old-id list, and deletes only what remains via the existing
+`ISourceEventRepository.DeleteByIdsAsync`. This reuse — rather than a single SQL
+`NOT IN` over a JSON array column — is deliberate: SQLite has no first-class way to
+explode `source_event_ids_json` server-side, so the set difference happens in C#
+against two already-existing repository primitives instead of adding a new one.
+
 ## Windows integration
 
 The WPF process stays alive without a main window and exposes a Windows notification
-area icon. A message-only `HwndSource` registers `Ctrl+Alt+W` using
+area icon. `App.OnStartup` first acquires a named `Mutex`
+(`WorkLogAI.App.SingleInstance`, or `WorkLogAI.App.SingleInstance.Sample` under
+`--sample-data`) with `initiallyOwned: true`; if it did not create the mutex, a
+second instance is already running, so it shows a Japanese notice and calls
+`Shutdown(0)` before any tray icon, hotkey, or `AppServices` construction happens.
+`OnExit` releases and disposes the mutex defensively (wrapped try/catch/finally —
+an abandoned-mutex or already-released edge case must never crash exit).
+
+A message-only `HwndSource` registers `Ctrl+Alt+W` using
 `RegisterHotKey`; disposal always calls `UnregisterHotKey`. `Ctrl+Alt+M` for
-議事録モード registers the same way, through the same now-parameterized
-`GlobalHotKey`, but only when `meeting.hotkey_enabled` (default on) is true at
-`OnStartup` — toggling the setting takes effect after a restart, since hotkey
-(un)registration only happens once per process lifetime, not on every settings save.
+議事録モード registers the same way, through the same parameterized
+`GlobalHotKey`, and is additionally toggled live: `App.ApplyMeetingHotKeySetting`
+(called from `SettingsWindow` right after a successful save) compares the
+requested enabled state against whether `_meetingHotKey` is currently non-null and
+registers/unregisters on the spot — no restart is required, unlike the original
+startup-only registration this replaced.
 
 The capture window has one single-line `TextBox` and uses `SizeToContent.Height`
 instead of a fixed outer height, so the client area stays usable regardless of
@@ -346,13 +443,22 @@ toast for approximately 800 ms; the toast positions itself from the capture wind
 `ActualWidth`/`ActualHeight`, falling back to `SystemParameters.WorkArea` when those
 are not yet available (e.g. before the window has laid out).
 
-A `DispatcherTimer` ticks every 60 seconds and calls the pure `ReminderPlanner`
-(enabled flag, weekday check, configured time gate, zero-notes-today check,
-once-per-day via a stored last-shown date) to decide whether to show a tray balloon
-prompting the user to record a note; clicking the balloon opens quick capture. The
-last-shown date is persisted before the balloon is raised, as plain
+A `DispatcherTimer` ticks every 60 seconds. Each tick first calls
+`CheckDailyBackupAsync`, which compares today's date against a stored
+`backup.last_checked_date` setting (same pattern as the reminder's last-shown
+date); on the first tick of a new calendar day it stores today's date and calls
+`AppServices.RunDatabaseBackupIfDue()` (a no-op under `--sample-data`), which
+re-invokes the same `DatabaseBackupService.RunIfNeeded()` the startup path already
+uses — that method stays idempotent per week, so this only widens *how often* it
+gets a chance to run, letting a tray instance that never restarts still pick up a
+weekly backup. The tick then calls the pure `ReminderPlanner` (enabled flag,
+weekday check, configured time gate, zero-notes-today check, once-per-day via a
+stored last-shown date) to decide whether to show a tray balloon prompting the
+user to record a note; clicking the balloon opens quick capture. The last-shown
+date is persisted before the balloon is raised, as plain
 `reminder.last_shown_date` settings state, so a restart mid-day cannot re-trigger
-the same day's reminder.
+the same day's reminder. Both checks share the tick's one try/catch, logged to
+`ErrorLog` under `App.ReminderTick` on failure.
 
 `WindowsStartupRegistrar` (`WorkLogAI.Infrastructure`, behind the `IStartupRegistrar`
 Core contract) implements opt-in auto-start by writing the current process path to
@@ -361,7 +467,7 @@ host (`dotnet`/`dotnet.exe`) with a Japanese error, since only a published,
 self-contained EXE has a stable path to register; the settings window also disables
 the checkbox entirely under `--sample-data`.
 
-**候補を生成…** now opens `WeekPickerWindow` before running collection instead of
+**週報候補を生成…** opens `WeekPickerWindow` before running collection instead of
 always targeting the week containing today. The window itself stays dumb: it asks
 the pure Core `WeekOptionBuilder.Build(today, weekStartsOn, 8)` for an ordered list
 of `WeekRange`/`WeekOptionKind` (this-week, last-week, older), attaches only the
@@ -369,6 +475,26 @@ Japanese labels (`今週`/`先週`/no prefix) in the App layer, and defaults the
 selection to 今週. Cancel (Esc or キャンセル) aborts before any collection or
 generation call runs; OK (Enter or OK) flows the chosen `WeekRange` through the
 same `GenerateCandidatesAsync` path used previously for "this week only".
+
+**月次まとめを出力…** follows the identical dumb-window/pure-builder split:
+`MonthPickerWindow` asks the pure Core `MonthOptionBuilder.Build(today, 12)` for
+the current month plus the previous 11 (`MonthOption(Year, Month)`, newest first,
+correctly wrapping the year boundary), attaches only the `{year}年{month}月` label
+in the App layer, and defaults the selection to the current month. On OK,
+`App.ExportMonthlySummaryAsync` computes the calendar month's first/last day,
+calls `IReportCandidateRepository.ListSelectedByDateRangeAsync` (which spans every
+`week_start` that overlaps the month, not just one), maps the result through the
+existing `CandidateReportMapper.MapSelected`, and calls
+`IWeeklyReportExporter.ExportMonthAsync`. An empty result shows
+「対象月に採用済みの行がありません。」 instead of writing a file; a non-empty result
+offers to open the file afterward via `ExportResultPrompt`'s owner-less overload
+(the tray menu itself has no parent `Window` to pass as owner, unlike every other
+call site of `ExportResultPrompt`, which are all `Window` subclasses using `this`).
+
+The settings window is organized into a `TabControl` with five tabs
+(基本/収集/AI/Microsoft 365/議事録) at a fixed 560×560 size, replacing the earlier
+single scrolling column; every control, event handler, and validation rule moved
+into its tab unchanged.
 
 ## Excel contract
 
@@ -393,6 +519,19 @@ printing at one page wide; the data area has no merged cells now that grouping
 happens by day rather than by consecutive same-date rows. The worksheet's
 default font is set to Noto Sans JP right after worksheet creation and again
 explicitly on the title, header, and data ranges.
+
+`ClosedXmlWeeklyReportExporter.ExportAsync` and the newer `ExportMonthAsync` share
+one private `RenderAsync(titleText, fileName, rows, outputDirectory, identity, ct)`
+core — every cell/style/grouping decision above is written exactly once.
+`ExportAsync` supplies the weekly title/filename (`{ReportTitle}
+{start}〜{end}`, `{title} {yyyyMMdd}-{yyyyMMdd}.xlsx`); `ExportMonthAsync` supplies
+the monthly ones (`{ReportTitle} {year}年{month}月 月次まとめ`, `{title} 月次
+{yyyyMM}.xlsx`, sanitized the same way via `ReportFileNameSanitizer`). Because
+`DailyReportGrouper.Group` only ever groups by `(ReportRow.Date, Category)` and is
+never told which week a row came from, feeding it a whole month's `ReportRow`s —
+which can span several `week_start` values — produces exactly the same one-row-
+per-day output the weekly export already produces, with no month-specific
+grouping logic required.
 
 ## Security and deferred integrations
 
@@ -461,3 +600,34 @@ notes, candidates, and mail. Weekly generation still only ever sees a formatted
 meeting's `summary_line` (via `SourceEvent.Body`) — raw `meeting_lines` rows are
 read solely by `MeetingCaptureWindow`/`MeetingMarkdownBuilder`/`MeetingFormatClient`
 and never by anything in the weekly collection or generation path.
+
+`OpenAiKeyProbe` (settings' **APIキーをテスト**) is a fifth, separately governed
+network call type: a single `GET https://api.openai.com/v1/models` with the
+candidate key as a bearer token and a 10s timeout. It never sends request JSON
+(there is none), never logs the key, and never surfaces a response body —
+`ProbeAsync` collapses every outcome to one of three enum values. Both weekly
+generation's `OpenAiResponsesClient` and 議事録モード's `MeetingFormatClient` now
+send their single HTTP attempt through the shared, injectable-delay
+`TransientRetryPolicy`, which can turn one logical request into up to three actual
+attempts (2s/5s backoff, or a bounded server `Retry-After`) on a 429/5xx/transport
+failure; this changes retry *count*, not payload shape or destination, so none of
+the redaction/exclusion guarantees above are affected.
+
+`DataRetentionService`'s 180-day source-event deletion (see Persistence) is a
+storage-lifecycle change, not a new network or secret boundary: it deletes rows
+from `source_events` only, via the existing `ISourceEventRepository`, and it
+verifies a row is unreferenced by any stored `report_candidates` row (any
+week/origin/edited/selected state) before deleting it, so a kept weekly or monthly
+export result can never have its evidence disappear out from under it. Failures
+are caught and sent to `ErrorLog` under `AppServices.DataRetention`; a retention
+problem never blocks startup, mirroring `DatabaseBackupService`'s own
+never-blocks-startup discipline.
+
+`.github/workflows/ci.yml` builds and tests `WorkLogAI.sln` (`restore` /
+`build -c Release` / `test -c Release`) on `windows-latest` for every push and
+pull request to `main`. It is the only place the `WorkLogAI.App` WPF project
+(`net8.0-windows`, `UseWPF`/`UseWindowsForms`) actually compiles end to end —
+this repository's own Linux dev host can only build/test `WorkLogAI.Core` and
+`WorkLogAI.Infrastructure` plus run `WorkLogAI.Tests` with
+`-p:EnableWindowsTargeting=true`, per the existing non-Windows workflow described
+in the README.

@@ -86,6 +86,49 @@ public sealed class Phase2PersistenceTests
     }
 
     [Fact]
+    public async Task ListIdsOlderThanAsync_returns_only_events_strictly_before_the_cutoff()
+    {
+        using var temporary = new TemporaryDirectory();
+        var factory = await CreateDatabaseAsync(temporary, "older-than.db");
+        var repository = new SqliteSourceEventRepository(factory);
+        var cutoff = new DateTimeOffset(2026, 2, 1, 0, 0, 0, TimeSpan.Zero);
+        var older = SourceEventFactory.Create(
+            cutoff.AddDays(-1),
+            SourceTypes.Manual,
+            "old",
+            "old row",
+            "manual",
+            "review-manual:old",
+            1,
+            cutoff.AddDays(-1));
+        var atCutoff = SourceEventFactory.Create(
+            cutoff,
+            SourceTypes.Manual,
+            "at-cutoff",
+            "at cutoff row",
+            "manual",
+            "review-manual:at-cutoff",
+            1,
+            cutoff);
+        var newer = SourceEventFactory.Create(
+            cutoff.AddDays(1),
+            SourceTypes.Manual,
+            "new",
+            "new row",
+            "manual",
+            "review-manual:new",
+            1,
+            cutoff.AddDays(1));
+        await repository.InsertIfNewAsync(older);
+        await repository.InsertIfNewAsync(atCutoff);
+        await repository.InsertIfNewAsync(newer);
+
+        var oldIds = await repository.ListIdsOlderThanAsync(cutoff);
+
+        Assert.Equal([older.Id], oldIds);
+    }
+
+    [Fact]
     public void Local_mapping_preserves_evidence_and_never_invents_completion_or_results()
     {
         var source = SourceEventFactory.Create(
@@ -272,6 +315,54 @@ public sealed class Phase2PersistenceTests
         Assert.Equal(2, restored);
         Assert.True(reloaded[target.Id].Selected);
         Assert.True(reloaded[untouched.Id].Selected);
+    }
+
+    [Fact]
+    public async Task ListSelectedByDateRangeAsync_spans_multiple_weeks_and_excludes_unselected_and_out_of_range_rows()
+    {
+        using var temporary = new TemporaryDirectory();
+        var factory = await CreateDatabaseAsync(temporary, "monthly-range.db");
+        var repository = new SqliteReportCandidateRepository(factory);
+        var julyWeekStart = new DateOnly(2026, 6, 29);
+        var augustWeekStart = new DateOnly(2026, 7, 27);
+        var inRangeEarly = new ReportCandidate(
+            Guid.NewGuid(), julyWeekStart, new DateOnly(2026, 7, 2), "案件A", "活動A",
+            "", "pending", .8, true, false, [Guid.NewGuid()]);
+        var inRangeLate = new ReportCandidate(
+            Guid.NewGuid(), augustWeekStart, new DateOnly(2026, 7, 30), "案件B", "活動B",
+            "", "pending", .8, true, false, [Guid.NewGuid()]);
+        var unselected = new ReportCandidate(
+            Guid.NewGuid(), julyWeekStart, new DateOnly(2026, 7, 15), "案件C", "活動C",
+            "", "pending", .8, false, false, [Guid.NewGuid()]);
+        var outOfRange = new ReportCandidate(
+            Guid.NewGuid(), augustWeekStart, new DateOnly(2026, 8, 1), "案件D", "活動D",
+            "", "pending", .8, true, false, [Guid.NewGuid()]);
+        await repository.ReplaceWeekAsync(julyWeekStart, [inRangeEarly, unselected]);
+        await repository.ReplaceWeekAsync(augustWeekStart, [inRangeLate, outOfRange]);
+
+        var result = await repository.ListSelectedByDateRangeAsync(
+            new DateOnly(2026, 7, 1),
+            new DateOnly(2026, 7, 31));
+
+        Assert.Equal([inRangeEarly.Id, inRangeLate.Id], result.Select(item => item.Id).ToArray());
+    }
+
+    [Fact]
+    public async Task ListAllSourceEventIdJsonAsync_returns_every_candidates_raw_source_id_json()
+    {
+        using var temporary = new TemporaryDirectory();
+        var factory = await CreateDatabaseAsync(temporary, "raw-source-ids.db");
+        var repository = new SqliteReportCandidateRepository(factory);
+        var weekStart = new DateOnly(2026, 7, 27);
+        var sourceId = Guid.NewGuid();
+        var candidate = new ReportCandidate(
+            Guid.NewGuid(), weekStart, new DateOnly(2026, 7, 28), "案件", "活動",
+            "", "pending", .8, true, false, [sourceId]);
+        await repository.ReplaceWeekAsync(weekStart, [candidate]);
+
+        var rawJsonValues = await repository.ListAllSourceEventIdJsonAsync();
+
+        Assert.Contains(rawJsonValues, json => json.Contains(sourceId.ToString(), StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]

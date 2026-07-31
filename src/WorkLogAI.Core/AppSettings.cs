@@ -16,6 +16,7 @@ public static class AppSettingKeys
     public const string ReminderEnabled = "reminder.enabled";
     public const string ReminderTime = "reminder.time";
     public const string ReminderLastShownDate = "reminder.last_shown_date";
+    public const string BackupLastCheckedDate = "backup.last_checked_date";
     public const string GraphClientId = "graph.client_id";
     public const string GraphTenantId = "graph.tenant_id";
     public const string GraphMailEnabled = "graph.mail_enabled";

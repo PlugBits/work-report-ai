@@ -209,6 +209,7 @@ public partial class App : System.Windows.Application
         menu.Items.Add("クイック入力 (Ctrl+Alt+W)", null, (_, _) => ShowQuickCapture());
         menu.Items.Add("議事録を開始 (Ctrl+Alt+M)", null, (_, _) => ShowMeetingMode());
         menu.Items.Add("週報候補を生成…", null, async (_, _) => await GenerateCandidatesAsync());
+        menu.Items.Add("月次まとめを出力…", null, async (_, _) => await ExportMonthlySummaryAsync());
         menu.Items.Add("今週の記録を見る", null, (_, _) => ShowHistory());
         menu.Items.Add("設定", null, (_, _) => ShowSettings());
         menu.Items.Add(new Forms.ToolStripSeparator());
@@ -237,6 +238,8 @@ public partial class App : System.Windows.Application
 
         try
         {
+            await CheckDailyBackupAsync();
+
             var settings = await _services.Settings.LoadAsync();
             var lastShownValue = await _services.SettingsStore.GetAsync(
                 AppSettingKeys.ReminderLastShownDate);
@@ -277,6 +280,39 @@ public partial class App : System.Windows.Application
         {
             ErrorLog.Log("App.ReminderTick", exception);
         }
+    }
+
+    /// <summary>
+    /// Runs at most once per calendar day from the reminder timer tick, so a tray
+    /// instance that stays alive for days without restarting still gets a chance at
+    /// the weekly database backup (which otherwise only ran at startup).
+    /// <see cref="DatabaseBackupService.RunIfNeeded"/> remains idempotent per week;
+    /// this only widens how often it gets invoked.
+    /// </summary>
+    private async Task CheckDailyBackupAsync()
+    {
+        if (_services is null)
+        {
+            return;
+        }
+
+        var today = DateOnly.FromDateTime(DateTime.Now);
+        var lastCheckedValue = await _services.SettingsStore.GetAsync(
+            AppSettingKeys.BackupLastCheckedDate);
+        var lastChecked = DateOnly.TryParseExact(lastCheckedValue, "yyyy-MM-dd", out var parsed)
+            ? parsed
+            : (DateOnly?)null;
+
+        if (lastChecked == today)
+        {
+            return;
+        }
+
+        await _services.SettingsStore.SetAsync(
+            AppSettingKeys.BackupLastCheckedDate,
+            today.ToString("yyyy-MM-dd"));
+
+        _services.RunDatabaseBackupIfDue();
     }
 
     private void ShowQuickCapture()
@@ -499,6 +535,51 @@ public partial class App : System.Windows.Application
         {
             progress?.Close();
             Interlocked.Exchange(ref _collectionRunning, 0);
+        }
+    }
+
+    private async Task ExportMonthlySummaryAsync()
+    {
+        if (_services is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var picker = new MonthPickerWindow(DateOnly.FromDateTime(DateTime.Today));
+            if (picker.ShowDialog() != true || picker.SelectedMonth is not { } month)
+            {
+                return;
+            }
+
+            var settings = await _services.Settings.LoadAsync();
+            var firstDay = new DateOnly(month.Year, month.Month, 1);
+            var lastDay = firstDay.AddMonths(1).AddDays(-1);
+            var candidates = await _services.Candidates.ListSelectedByDateRangeAsync(firstDay, lastDay);
+            if (candidates.Count == 0)
+            {
+                MessageBox.Show("対象月に採用済みの行がありません。", "WorkLog AI");
+                return;
+            }
+
+            var rows = new CandidateReportMapper().MapSelected(candidates);
+            var path = await _services.Exporter.ExportMonthAsync(
+                month.Year,
+                month.Month,
+                rows,
+                settings.ExcelOutputDirectory,
+                new ReportIdentity(settings.CompanyName, settings.EmployeeName, settings.ReportTitle));
+            ExportResultPrompt.OfferToOpen(path);
+        }
+        catch (Exception exception)
+        {
+            ErrorLog.Log("App.ExportMonthlySummary", exception);
+            MessageBox.Show(
+                $"月次まとめを出力できませんでした。\n{exception.Message}",
+                "WorkLog AI",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
         }
     }
 

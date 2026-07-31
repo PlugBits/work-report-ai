@@ -296,4 +296,98 @@ public sealed class ExcelExportTests
 
         Assert.Equal("週報_7_27 20260727-20260802.xlsx", fileName);
     }
+
+    [Fact]
+    public async Task ExportMonthAsync_uses_the_monthly_filename_and_title_cell()
+    {
+        using var temporary = new TemporaryDirectory();
+        var exporter = new ClosedXmlWeeklyReportExporter();
+        var rows = new[]
+        {
+            new ReportRow(new DateOnly(2026, 7, 28), "案件A", "最初", "")
+        };
+
+        var path = await exporter.ExportMonthAsync(
+            2026,
+            7,
+            rows,
+            temporary.Path,
+            new ReportIdentity("サンプル株式会社", "山田 太郎"));
+
+        Assert.Equal("業務週報 月次 202607.xlsx", Path.GetFileName(path));
+        using var workbook = new XLWorkbook(path);
+        var sheet = workbook.Worksheet("業務週報");
+        Assert.Equal("業務週報 2026年7月 月次まとめ", sheet.Cell("A1").GetString());
+    }
+
+    [Fact]
+    public void CreateMonthFileName_sanitizes_configured_title_for_the_file_system()
+    {
+        var exporter = new ClosedXmlWeeklyReportExporter();
+
+        var fileName = exporter.CreateMonthFileName(
+            2026,
+            7,
+            new ReportIdentity("サンプル株式会社", "山田 太郎", "週報/7/27"));
+
+        Assert.Equal("週報_7_27 月次 202607.xlsx", fileName);
+    }
+
+    [Fact]
+    public async Task ExportMonthAsync_groups_rows_from_different_weeks_by_calendar_day()
+    {
+        using var temporary = new TemporaryDirectory();
+        var exporter = new ClosedXmlWeeklyReportExporter();
+        var rows = new[]
+        {
+            // 2026-07-02 falls in a different week than 2026-07-30, but both are
+            // in July — the monthly export must group them by day regardless.
+            new ReportRow(new DateOnly(2026, 7, 2), "案件A", "月初の活動", ""),
+            new ReportRow(new DateOnly(2026, 7, 30), "案件B", "月末の活動その1", "完了"),
+            new ReportRow(new DateOnly(2026, 7, 30), "案件C", "月末の活動その2", "")
+        };
+
+        var path = await exporter.ExportMonthAsync(
+            2026,
+            7,
+            rows,
+            temporary.Path,
+            new ReportIdentity("サンプル株式会社", "山田 太郎"));
+
+        using var workbook = new XLWorkbook(path);
+        var sheet = workbook.Worksheet("業務週報");
+
+        Assert.Equal("社内\n2026/07/02\n山田", sheet.Cell("A4").GetString());
+        Assert.Equal("① 月初の活動", sheet.Cell("C4").GetString());
+        Assert.Equal("社内\n2026/07/30\n山田", sheet.Cell("A5").GetString());
+        Assert.Equal("① 月末の活動その1\n② 月末の活動その2", sheet.Cell("C5").GetString());
+        Assert.Equal("① 完了", sheet.Cell("D5").GetString());
+    }
+
+    [Fact]
+    public async Task ExportMonthAsync_still_splits_a_mixed_day_into_internal_and_external_rows()
+    {
+        using var temporary = new TemporaryDirectory();
+        var exporter = new ClosedXmlWeeklyReportExporter();
+        var rows = new[]
+        {
+            new ReportRow(new DateOnly(2026, 7, 15), "社内案件", "社内活動", ""),
+            new ReportRow(new DateOnly(2026, 7, 15), "社外案件", "社外活動", "", ReportCategories.External)
+        };
+
+        var path = await exporter.ExportMonthAsync(
+            2026,
+            7,
+            rows,
+            temporary.Path,
+            new ReportIdentity("サンプル株式会社", "山田 太郎"));
+
+        using var workbook = new XLWorkbook(path);
+        var sheet = workbook.Worksheet("業務週報");
+
+        Assert.Equal("社内\n2026/07/15\n山田", sheet.Cell("A4").GetString());
+        Assert.Equal("① 社内案件", sheet.Cell("B4").GetString());
+        Assert.Equal("社外\n2026/07/15\n山田", sheet.Cell("A5").GetString());
+        Assert.Equal("① 社外案件", sheet.Cell("B5").GetString());
+    }
 }
