@@ -93,14 +93,33 @@ corners) applied consistently across all windows.
   preparation, and AI generation, and the weekly review window that opens
   afterward shows an in-window generation-summary banner instead of a separate
   completion dialog.
-- Each candidate card in the weekly review has a **削除** button (confirmed via a
-  Yes/No dialog) that removes the row from the in-memory list; the removal is only
-  persisted when **編集を保存** or **Excel出力** runs next, matching how other edits
-  are saved. Rows added via **1行追加** are truly deleted, including their backing
-  `review-manual:`-tagged source event, so they cannot resurface. Rows sourced from
-  collected/AI data are only removed from this week's review — the confirmation
-  dialog notes that the next collection/generation run may surface them again since
-  the underlying record still exists.
+- Each candidate card in the weekly review has a **削除** button; the removal is
+  only persisted when **編集を保存** or **Excel出力** runs next, matching how other
+  edits are saved. Rows added via **1行追加** are truly deleted (a plain Yes/No
+  confirm), including their backing `review-manual:`-tagged source event, so they
+  cannot resurface. Rows sourced from collected/AI data instead show
+  `DeleteCardConfirmWindow`, a three-way choice: **行のみ削除** removes only this
+  week's row (the next collection/generation run may surface it again, since the
+  underlying record still exists) or **元データごと削除**, which permanently
+  deletes the backing source event(s), adds their `source_ref`s to a suppression
+  list so no future collection ever re-inserts or re-maps them, and soft-deletes
+  any originating quick note so the history view matches.
+- **Permanent deletion via a suppression list**: `suppressed_source_refs`
+  (migration 005) records `source_ref`s that must never be (re-)collected.
+  `LocalCollectionCoordinator` consults it at the start of every run, skipping
+  suppressed refs both when inserting newly collected events and when mapping the
+  week's stored events to candidates, so a suppressed origin stays gone even
+  though the underlying git history or quick note text is still readable by the
+  collector. Suppression is reversible: reopening a soft-deleted quick note in
+  history un-suppresses its ref as well.
+- The weekly history window gains a **削除済みを表示** checkbox (unchecked by
+  default) so deleted notes stay hidden from the normal view; deleting a note now
+  also suppresses its source ref and drops any already-stored event for it (same
+  permanent-deletion mechanism as the review window), and reopening a note
+  reverses the suppression. Double-clicking a non-deleted note opens
+  `QuickNoteEditWindow` to edit its text in place; saving updates the note and
+  deletes (without suppressing) its stale source event, so the next collection run
+  stores the edited text instead of the old one.
 - The weekly review's **Excel出力** checks coverage of selected rows only and, if
   any Monday–Friday day has zero selected candidates, shows a Yes/No confirmation
   listing the blank weekdays before exporting. Weekends never trigger it.
@@ -231,6 +250,20 @@ operational-quality items already implemented (see Usability additions above).
 
 ## Reliability and generation-quality additions
 
+- **Mandatory manual-memo coverage in AI generation**: `AiPromptBuilder`'s system
+  instructions require that every 手動メモ (manual quick note) evidence item is
+  reflected in at least one generated candidate — none may be silently dropped,
+  though multiple memos for the same work may be consolidated into one candidate
+  as long as every contributing memo stays cited in `sourceEventIds`. Terse memo
+  wording must be rewritten into a complete company-facing report sentence rather
+  than transcribed verbatim, and the model is instructed to infer `status` and a
+  concrete result from the memo's own wording (e.g. 作成/完了/実施/対応済み →
+  `completed` with a specific result; 継続/進行中/検討中 → `ongoing`; otherwise
+  `pending`). When the model is not confident enough to state a result, it must
+  still fill the result field with its best inference and set
+  `needsConfirmation: true` with a `confirmationQuestion` rather than leaving the
+  result blank. The JSON Schema and wire format are unchanged — this only
+  strengthens the prompt's natural-language instructions.
 - **AI candidates supersede covered local rows**: after a successful weekly
   generation, any still-selected, unedited local row (quick memo or meeting
   summary) whose entire evidence set is now fully covered by the generated AI
@@ -312,7 +345,7 @@ The `WorkLogAI.App` WPF project (`net8.0-windows`) only builds on Windows. On
 non-Windows hosts, build and run `WorkLogAI.Tests` with
 `-p:EnableWindowsTargeting=true`, e.g.
 `dotnet test tests/WorkLogAI.Tests/WorkLogAI.Tests.csproj -p:EnableWindowsTargeting=true`.
-The suite currently has 338 tests.
+The suite currently has 345 tests.
 
 Create the specified self-contained, single-file Windows build with:
 
@@ -358,7 +391,7 @@ The paths are injectable for tests and future hosting.
 8. Use **Excel出力** in review to persist changes and export selected rows only —
    a blank-weekday warning appears first if any selected weekday has no rows, and
    a prompt to open the file appears after a successful export.
-9. Open **今週の記録を見る** to browse notes or manually export the four-column
+9. Open **今週の記録を見る** to browse notes or manually export the five-column
    Phase 1 report (also offers to open the file after export).
 10. Select **月次まとめを出力…**, pick a month (current or one of the previous 11),
     to export every already-selected candidate in that month — across all of its
@@ -366,25 +399,26 @@ The paths are injectable for tests and future hosting.
 
 The generated file is named
 `業務週報 YYYYMMDD-YYYYMMDD.xlsx` and matches the layout of the user's real
-submitted weekly report: a title row (A1:C1) plus the company name (D1) and
-employee name (D2) stacked in their own cells, a blue-filled white-bold header
-row with the captions 日時/項目・案件・目標金額/活動内容/結果・決定事項・今後の課題,
+submitted weekly report: a title row (A1:C1) plus the company name (E1) and
+employee name (E2) stacked in their own cells, a blue-filled white-bold header
+row with the captions 日付/曜日/項目・案件・目標金額/活動内容/結果・決定事項・今後の課題,
 and a **day block per calendar day** (only days with at least one selected
 item) made up of **one sheet row per item**, so a day's 項目, 活動内容, and
 結果・決定事項 for a given item always sit on the same row and stay aligned
-even once text wraps. Each day's 日時 cell holds exactly two stacked lines —
-the date (`yyyy/MM/dd`) and the single-character Japanese weekday in
-parentheses, e.g. `(月)` — written only on the block's first row; every other
-row in the block leaves 日時 empty. Multiple items on the same day are
-numbered with circled digits (①②③…, falling back to `(21)`, `(22)`, … past
-①-⑳), with the same number repeated on each item's 項目 and 活動内容 cells on
-its own row so the two line up by number; that row's 結果・決定事項 cell holds
-the numbered result text only when it is non-blank, and is otherwise left
-empty. Each day's block is padded with blank rows so it always totals at
-least 4 sheet rows and always keeps at least one trailing blank row, even on
-a day with 4 or more items, so every day reads as at least the same visual
-size and the boundary before the next day is always visible. Borders are
-drawn constructively, never as a blanket border cleared back off in places:
+even once text wraps. Each day's date and weekday live in their own separate
+cells — 日付 holds the date (`yyyy/MM/dd`) alone and 曜日 holds the
+single-character Japanese weekday in parentheses, e.g. `(月)` — each written
+only on the block's first row; every other row in the block leaves both 日付
+and 曜日 empty. Multiple items on the same day are numbered with circled
+digits (①②③…, falling back to `(21)`, `(22)`, … past ①-⑳), with the same
+number repeated on each item's 項目 and 活動内容 cells on its own row so the
+two line up by number; that row's 結果・決定事項 cell holds the numbered
+result text only when it is non-blank, and is otherwise left empty. Each
+day's block is padded with blank rows so it always totals at least 4 sheet
+rows and always keeps at least one trailing blank row, even on a day with 4
+or more items, so every day reads as at least the same visual size and the
+boundary before the next day is always visible. Borders are drawn
+constructively, never as a blanket border cleared back off in places:
 vertical lines run continuously down every column for every row of the table,
 and a horizontal line appears only at the bottom of each day's block (the
 boundary before the next day) — no lines appear between item rows or around

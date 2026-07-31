@@ -18,9 +18,12 @@
   `DataRetentionService`.
 - `WorkLogAI.App` (`net8.0-windows`) is the WPF tray host. It owns the single-
   instance mutex, the Win32 hotkeys (quick capture and 議事録モード), quick
-  capture, weekly history, the weekday reminder/daily-backup-check timer, the
-  tabbed settings window, the month picker and monthly summary export action,
-  meeting capture/session-chooser/send-preview windows, and UI composition.
+  capture, weekly history (including the **削除済みを表示** toggle and
+  `QuickNoteEditWindow` note editing), the weekday reminder/daily-backup-check
+  timer, the tabbed settings window, the month picker and monthly summary export
+  action, meeting capture/session-chooser/send-preview windows,
+  `DeleteCardConfirmWindow`'s row-only-vs-row-and-source review deletion choice,
+  and UI composition.
 - `WorkLogAI.Tests` verifies boundaries and file output without using the production
   data directory.
 
@@ -63,6 +66,18 @@ It then rebuilds the requested week's candidate set from the complete deduplicat
 weekly event set. Candidate IDs are deterministic and every candidate retains its
 source event ID list in JSON.
 
+`LocalCollectionCoordinator.RunAsync` loads `ISourceEventRepository.ListSuppressedSourceRefsAsync`
+once per run into an in-memory set before touching any collector, then consults it
+twice: newly collected events whose `SourceRef` is suppressed are skipped before
+`InsertIfNewAsync` (so a permanently deleted origin — an amended git commit, a
+still-readable quick note — is never re-inserted), and the weekly event list is
+filtered against the same set before `SourceEventDeduplicator.LatestPerRef` and
+mapping run, so a suppressed ref already sitting in `source_events` (e.g. from
+before it was suppressed) is never mapped into a candidate either. Suppression is
+a standing exclusion list, independent of and orthogonal to the content-hash
+dedup — it survives across runs until explicitly reversed via
+`UnsuppressSourceRefsAsync`.
+
 Git uses an injectable process runner and `ProcessStartInfo.ArgumentList`. It applies
 the repository's configured `user.email`, or `user.name` fallback, as the author
 filter. Only commit timestamps, safe subject/body summary, filenames, aggregate
@@ -101,6 +116,18 @@ requires every candidate property, uses the exact status enum, bounded confidenc
 nonempty evidence IDs, and a nullable confirmation question. API response status,
 refusal, incomplete output, errors, empty output, malformed JSON, and invalid
 evidence are converted to safe messages without echoing request or response bodies.
+
+`AiPromptBuilder.Instructions` additionally requires full coverage of manual quick
+notes: every `sourceType: manual` evidence item must be reflected in at least one
+candidate (consolidation across multiple same-work memos is allowed as long as
+every contributing memo stays cited), memo wording must be rewritten into a
+complete business report sentence rather than transcribed, `status`/result should
+be inferred from completion-like wording in the memo itself (作成/完了/実施/
+対応済み → `completed` with a stated result; 継続/進行中/検討中 → `ongoing`;
+otherwise `pending`), and a low-confidence result must still be filled in with
+`needsConfirmation: true` and a `confirmationQuestion` rather than left blank.
+This changes only the natural-language instructions sent to the model — the JSON
+Schema and wire format are unchanged.
 
 The outbound builder re-runs redaction and excludes `sourceRef`, full local paths,
 source code, diffs, function output, full threads, and credentials. Selection is
@@ -191,6 +218,65 @@ collapsing every outcome to `Ok`/`Unauthorized`/`NetworkError` — the key and a
 response body never leave the method. The settings AI tab's **APIキーをテスト**
 button calls it against whatever is currently in the key field (or the stored
 credential if the field is blank) and shows only the three-way Japanese result.
+
+## Permanent deletion and history editing
+
+```text
+CandidateWindow 削除                      HistoryWindow 削除 / edit
+      |                                          |
+      v                                          v
+DeleteCardConfirmWindow                   soft-delete note (deleted_at)
+ 行のみ削除 | 元データごと削除 | キャンセル          |
+      |                                          v
+      | (元データごと削除)                 SuppressSourceRefsAsync([quick-note:{id}])
+      v                                    DeleteBySourceRefsAsync([quick-note:{id}])
+DeleteByIdsAsync(source events)                  |
+SuppressSourceRefsAsync(their refs)              v
+SoftDeleteAsync(originating quick notes)   再開 --> UnsuppressSourceRefsAsync
+      |
+      v
+suppressed_source_refs (never re-collected/re-mapped)
+```
+
+Review-window deletion of a collected/AI-origin card opens `DeleteCardConfirmWindow`,
+a three-way modal (**行のみ削除** / **元データごと削除** / キャンセル) mirroring
+`MeetingLineEditWindow`'s minimal dialog style. **行のみ削除** only removes the
+in-memory row, same as before this feature — the underlying source event(s) and
+any originating quick note are untouched, so a future collection/generation run
+may surface the same row again. **元データごと削除** additionally queues the
+row's backing source event ids, their non-blank `source_ref`s, and (for any
+`quick-note:`-prefixed ref) the originating quick note id; `PersistAsync` flushes
+these together after `SaveReviewAsync` succeeds — the backing events are deleted
+via `DeleteByIdsAsync`, their refs are added to `suppressed_source_refs` via
+`SuppressSourceRefsAsync`, and each originating note is soft-deleted via
+`SoftDeleteAsync`, in that order, all wrapped in one try/catch logged to
+`ErrorLog` under `CandidateWindow.SuppressSources`. Manual rows (`origin ==
+manual`) keep the older, simpler flow — a plain Yes/No confirm that always fully
+deletes the backing `review-manual:` event, since a manual row's only source is
+that one event.
+
+`HistoryWindow` gains a **削除済みを表示** checkbox (default unchecked, driving
+`ListAsync(..., includeDeleted:)`) so deleted notes stay hidden from the normal
+view instead of always being included. Deleting a note now also calls
+`SuppressSourceRefsAsync`/`DeleteBySourceRefsAsync` for its deterministic
+`quick-note:{id:D}` ref, matching the review window's permanent-deletion
+mechanism so a deleted note cannot resurface via the next collection even though
+its row is only soft-deleted (`deleted_at` set, not a hard SQL delete); **再開**
+(reopen) calls `UnsuppressSourceRefsAsync` for the same ref, reversing the
+suppression alongside clearing `deleted_at`. Double-clicking a non-deleted grid
+row (`_grid.MouseDoubleClick`) opens `QuickNoteEditWindow`; on save,
+`IQuickNoteRepository.UpdateTextAsync` replaces the note's text in place (id,
+`created_at`, `deleted_at` untouched; rejects blank text without writing) and the
+note's stale source event is deleted (without suppressing — the ref must remain
+collectable) via `DeleteBySourceRefsAsync`, so the next collection run stores a
+fresh event carrying the edited text instead of the old one.
+
+All suppression-related repository calls in both windows are wrapped in their own
+try/catch logged to `ErrorLog` (`HistoryWindow.SuppressDeletedNote`,
+`HistoryWindow.UnsuppressReopenedNote`, `HistoryWindow.DeleteStaleNoteEvent`,
+`CandidateWindow.SuppressSources`) so a persistence failure in the suppression
+side-effect never blocks the primary soft-delete/reopen/edit operation from
+completing and refreshing the view.
 
 ## Phase 4 Microsoft Graph flow
 
@@ -379,12 +465,13 @@ the same class of behavior an amended Git commit already produces for
 Embedded SQL migrations run in version order inside a transaction according to
 `PRAGMA user_version`. `001_initial.sql` creates the four specification tables,
 `002_phase3_review.sql` upgrades existing Phase 1–2 databases without rewriting the
-initial migration, `003_meeting_mode.sql` adds the three 議事録モード tables, and
+initial migration, `003_meeting_mode.sql` adds the three 議事録モード tables,
 `004_report_category.sql` (schema v4) adds `report_candidates.category` (社内/社外,
-default `internal`). The column, model field, and repository mapping remain in
+default `internal`) — the column, model field, and repository mapping remain in
 place, but the product surface no longer exposes or reads it: there is no
 review-time category selector, and the exporter no longer groups or labels by
-it — the stored value is dormant data carried through unchanged:
+it, so the stored value is dormant data carried through unchanged — and
+`005_suppressed_source_refs.sql` (schema v5) adds `suppressed_source_refs`:
 
 - `quick_notes`
 - `source_events`
@@ -396,9 +483,16 @@ it — the stored value is dormant data carried through unchanged:
   `(session_id, line_no)`)
 - `meeting_summaries` (session_id, formatted_json, summary_line, created_at;
   indexed on `session_id` — one row per AI-formatting run, oldest rows kept)
+- `suppressed_source_refs` (`source_ref` text primary key, `suppressed_at`) — the
+  permanent-deletion exclusion list consulted by `LocalCollectionCoordinator`
+  (see Permanent deletion and history editing above); `SuppressSourceRefsAsync`
+  inserts via `INSERT OR IGNORE` (re-suppressing an already-suppressed ref is a
+  no-op) and `UnsuppressSourceRefsAsync` deletes by ref
 
 Connections are short-lived and created from an injected path provider. Soft delete
-sets `quick_notes.deleted_at`; reopen sets it back to `NULL`.
+sets `quick_notes.deleted_at`; reopen sets it back to `NULL`. `UpdateTextAsync`
+replaces `quick_notes.text` in place without touching `id`/`created_at`/
+`deleted_at`, and rejects blank text by returning `false` without writing.
 
 Production and sample modes use separate subdirectories under Local Application
 Data. Tests inject temporary database paths.
@@ -502,41 +596,49 @@ into its tab unchanged.
 ## Excel contract
 
 ClosedXML writes one worksheet named `業務週報`, matching the layout of the
-user's real submitted weekly report. Row 1 holds the merged title (A1:C1); D1
-and D2 hold the company name and employee name as two stacked cells (replacing
-the earlier single "company / employee" title cell). Row 3 is the header row
-(日時/項目・案件・目標金額/活動内容/結果・決定事項・今後の課題) with a blue fill and
-white bold text (replacing the earlier light-gray header). `WorkLogAI.Core`'s
-pure `DailyReportGrouper` groups the already-filtered, chronologically sorted
-`ReportRow`s into one `DailyReportRow` per calendar day — `ReportRow.Category`
-plays no part in grouping — and numbers each day's items in arrival order
-(circled digits ①–⑳ via `DailyReportGrouper.CircledNumber`, falling back to
-`(21)`, `(22)`, … beyond that). The exporter renders **one sheet row per
-item**, not one row per day: each `DailyReportItem` in a `DailyReportRow` gets
-its own row, with the same circled number written into the 項目 (B) and
-活動内容 (C) cells so the two line up horizontally on that row even after text
-wraps, and the 結果・決定事項 (D) cell on that row holding the numbered result
-text only when it is non-blank (an empty string otherwise — never a stray
-number with no text). The 日時 (A) cell holding the two stacked lines (the
-date and, in parentheses, the single-character Japanese weekday, e.g. `(月)`)
-is written only on the block's first item row; every other row in the block —
-further item rows and all blank rows — leaves column A empty, so a day never
-repeats its date. Rows are wrapped, bordered, and configured for landscape
-printing at one page wide; the data area has no merged cells. The worksheet's
-default font is set to BIZ UDPゴシック right after worksheet creation and
-again explicitly on the title, header, and data ranges (a single range
-covering rows 1 through the last written row, so it also covers every new
-item row without a separate per-row font call); it ships with Windows 10
-1809+ and Windows 11, so no separate install is needed. Every day's block —
-its item rows plus enough blank rows to pad it to a uniform minimum of 4
-sheet rows, with at least one trailing blank row always present even when the
-item count alone already reaches or exceeds 4 — occupies at least the same
-visual size regardless of item count; every date gets this treatment,
-including the last one. Blank rows get no explicit height, so they stay
-ordinary rows that `AdjustToContents` and any later manual auto-fit re-run in
-Excel size like any other empty row. Print area and freeze-row math account
-for the item and blank rows automatically since they are folded into the same
-running row counter.
+user's real submitted weekly report. Row 1 holds the merged title (A1:C1); E1
+and E2 hold the company name and employee name as two stacked cells in the
+report's last column (replacing the earlier single "company / employee" title
+cell). Row 3 is the header row (日付/曜日/項目・案件・目標金額/活動内容/結果・
+決定事項・今後の課題) with a blue fill and white bold text (replacing the
+earlier light-gray header). `WorkLogAI.Core`'s pure `DailyReportGrouper` groups
+the already-filtered, chronologically sorted `ReportRow`s into one
+`DailyReportRow` per calendar day — `ReportRow.Category` plays no part in
+grouping — and numbers each day's items in arrival order (circled digits ①–⑳
+via `DailyReportGrouper.CircledNumber`, falling back to `(21)`, `(22)`, …
+beyond that); `DailyReportGrouper` itself is unaware of the exporter's column
+layout. The exporter renders **one sheet row per item**, not one row per day:
+each `DailyReportItem` in a `DailyReportRow` gets its own row, with the same
+circled number written into the 項目 (C) and 活動内容 (D) cells so the two
+line up horizontally on that row even after text wraps, and the 結果・決定事項
+(E) cell on that row holding the numbered result text only when it is
+non-blank (an empty string otherwise — never a stray number with no text).
+The date and weekday live in their own separate cells — 日付 (A) holds
+`yyyy/MM/dd` alone, and 曜日 (B) holds the single-character Japanese weekday
+in parentheses, e.g. `(月)` — each written only on the block's first item row;
+every other row in the block — further item rows and all blank rows — leaves
+both columns A and B empty, so a day never repeats its date or weekday. Rows
+are wrapped, bordered, and configured for landscape printing at one page
+wide; the data area has no merged cells. The worksheet's default font is set
+to BIZ UDPゴシック right after worksheet creation and again explicitly on the
+title, header, and data ranges (a single range covering rows 1 through the
+last written row, so it also covers every new item row without a separate
+per-row font call); it ships with Windows 10 1809+ and Windows 11, so no
+separate install is needed. Every day's block — its item rows plus enough
+blank rows to pad it to a uniform minimum of 4 sheet rows, with at least one
+trailing blank row always present even when the item count alone already
+reaches or exceeds 4 — occupies at least the same visual size regardless of
+item count; every date gets this treatment, including the last one. Blank
+rows get no explicit height, so they stay ordinary rows that
+`AdjustToContents` and any later manual auto-fit re-run in Excel size like any
+other empty row. Print area and freeze-row math account for the item and
+blank rows automatically since they are folded into the same running row
+counter.
+
+Column widths are fixed in Excel units, converted from the user's real
+report's pixel measurements: A (日付) 20.14 (≈146px), B (曜日) 7.0 (≈54px, the
+narrow new weekday-only column), C (項目) 39.71 (≈283px), D (活動内容) 69.29
+(≈490px), E (結果・決定事項) 60.14 (≈426px).
 
 Borders in the data area (rows 4 and down) are drawn **constructively**: the
 exporter never applies a blanket `Border.InsideBorder`/`OutsideBorder` over
@@ -544,13 +646,13 @@ the data area and then clears specific edges back off — that draw-then-clear
 pattern rendered inconsistently across viewers. Instead only the intended
 edges are set, once, from nothing. Vertical lines are continuous down the
 whole table regardless of block or row type: `LeftBorder = Thin` on every
-cell in columns A–D for every row from 4 to the last row (giving each column
+cell in columns A–E for every row from 4 to the last row (giving each column
 its left divider, including the table's outer left edge on column A) plus
-`RightBorder = Thin` on column D alone for that same row range (the table's
+`RightBorder = Thin` on column E alone for that same row range (the table's
 outer right edge). Horizontal lines appear only at day boundaries: each day
 block's *last* row (its last blank row, or its last item row on the rare
 day whose item count already meets the minimum) gets `BottomBorder = Thin`
-across A–D — the line between that day and the next, and, on the final
+across A–E — the line between that day and the next, and, on the final
 block, the bottom of the table — and no other row in the data area gets any
 `TopBorder` or `BottomBorder` at all, so there are no lines between item
 rows, between or around blank rows, or under row 4 (the boundary with the

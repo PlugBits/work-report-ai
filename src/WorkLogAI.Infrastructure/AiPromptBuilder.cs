@@ -81,6 +81,10 @@ public sealed partial class AiPromptBuilder(
         Use at most three confirmation questions.
         Never guess or change dates.
         Every candidate must cite one or more supplied event IDs.
+        手動メモ(sourceType manual)は最優先の一次情報であり、1件も漏らさずいずれかの候補に反映すること。複数メモが同一業務なら統合してよいが、どのメモも根拠に含めること。
+        メモの断片的な文言は、そのまま転記せず会社向けの業務報告文に書き直すこと(体言止めの断片→「〜を実施した/作成した」等の完結した文)。
+        メモの語尾・文言から状態と結果を推定すること: 「作成」「完了」「実施」「対応済み」等→status completed とし、結果欄に具体的成果を書く(例:「グループインボイスのQB取り込み手順書を作成」→結果「手順書を作成完了」)。「継続」「進行中」「検討中」→ongoing。判断できない場合のみ pending。
+        結果を推定する自信がない場合は、結果欄を空にせず needsConfirmation を true にして confirmationQuestion で確認する。
         """;
 
     private static string Outbound(string value, int maximumCharacters) =>

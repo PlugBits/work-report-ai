@@ -12,7 +12,7 @@
 - [x] Note creation, weekly list, soft deletion, and reopen
 - [x] Configurable week-start calculation and weekly history navigation
 - [x] Deterministic manual mapping with no invented result
-- [x] Manual ClosedXML export with exact Japanese filename and four-column layout
+- [x] Manual ClosedXML export with exact Japanese filename and five-column layout
 - [x] Landscape, one-page-wide, wrapped, chronological Excel output
 - [x] Isolated `--sample-data` database and idempotent sample seed
 - [x] Non-secret settings boundary rejects secret-like keys
@@ -272,6 +272,42 @@ Teams, OneDrive, or additional mailboxes).
       recent-kept/idempotent), monthly repository range query, monthly export
       (filename, title cell, multi-week day-grouping), and month
       option builder (count, ordering, year-boundary wrap) — no live API test
+
+## Post-Phase 4 permanent deletion and generation-quality additions
+
+- [x] Migration `005_suppressed_source_refs.sql` (schema v5) adds
+      `suppressed_source_refs`; `LocalCollectionCoordinator` loads it once per run
+      and skips suppressed refs both on insert and on weekly mapping
+- [x] Review-window card deletion of a collected/AI-origin row offers a three-way
+      choice (`DeleteCardConfirmWindow`): **行のみ削除** (this week's row only,
+      matching prior behavior) or **元データごと削除** (deletes the backing source
+      events, suppresses their refs, and soft-deletes any originating quick note,
+      flushed together in `PersistAsync` after save succeeds); manual rows keep
+      the simpler always-full-delete Yes/No confirm
+- [x] History window gains a **削除済みを表示** toggle (default off, hides deleted
+      notes); deleting a note suppresses its `quick-note:{id}` ref and drops any
+      already-stored event for it, reopening un-suppresses it
+- [x] Double-clicking a non-deleted history row opens `QuickNoteEditWindow`;
+      saving calls `IQuickNoteRepository.UpdateTextAsync` (in-place text
+      replacement, blank text rejected) and deletes (without suppressing) the
+      note's stale source event so the next collection stores the edited text
+- [x] `AiPromptBuilder.Instructions` strengthened for manual-memo coverage: every
+      手動メモ evidence item must land in some candidate (consolidation across
+      memos allowed as long as every memo stays cited), memo wording must be
+      rewritten into a full report sentence rather than transcribed, status/result
+      should be inferred from completion-like wording, and a low-confidence result
+      must still be filled in with `needsConfirmation: true` rather than left
+      blank — the JSON Schema and wire format are unchanged
+- [x] Weekly/monthly Excel export becomes five columns: 日付 and 曜日 split into
+      separate cells (A/B, both written only on a day block's first row),
+      followed by 項目 (C)/活動内容 (D)/結果・決定事項 (E); company/employee move
+      to E1/E2; column widths updated (A 20.14, B 7.0, C 39.71, D 69.29, E 60.14);
+      constructive borders, print area, and freeze extend across A:E;
+      `DailyReportGrouper` itself is unchanged
+- [x] Automated tests: prompt-instruction content assertions for the new
+      manual-memo-coverage/rewriting/confirmation rules, and full rewrite of the
+      Excel export/border/column/identity-cell tests for the five-column layout
+      (weekly and monthly)
 
 ## Explicitly not implemented after Phase 4
 
