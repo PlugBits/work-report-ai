@@ -88,6 +88,9 @@ public sealed class ClosedXmlWeeklyReportExporter : IWeeklyReportExporter
         sheet.Range("A1:E2").Style.Font.FontName = FontName;
         sheet.Range("E1:E2").Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Left;
 
+        // Row 3 is left completely blank — a one-row spacer between the
+        // title area and the header — with no content, borders, or fill of
+        // its own; the header moves down to row 4 and data starts at row 5.
         var headers = new[]
         {
             "日付",
@@ -98,10 +101,10 @@ public sealed class ClosedXmlWeeklyReportExporter : IWeeklyReportExporter
         };
         for (var column = 1; column <= headers.Length; column++)
         {
-            sheet.Cell(3, column).Value = headers[column - 1];
+            sheet.Cell(4, column).Value = headers[column - 1];
         }
 
-        var headerRange = sheet.Range("A3:E3");
+        var headerRange = sheet.Range("A4:E4");
         headerRange.Style.Font.Bold = true;
         headerRange.Style.Font.FontColor = XLColor.White;
         headerRange.Style.Font.FontName = FontName;
@@ -113,7 +116,7 @@ public sealed class ClosedXmlWeeklyReportExporter : IWeeklyReportExporter
 
         const int MinimumBlockRows = 4;
 
-        var rowNumber = 4;
+        var rowNumber = 5;
         var blockLastRows = new List<int>();
 
         foreach (var day in dailyRows)
@@ -161,9 +164,9 @@ public sealed class ClosedXmlWeeklyReportExporter : IWeeklyReportExporter
             blockLastRows.Add(rowNumber - 1);
         }
 
-        var lastRow = Math.Max(3, rowNumber - 1);
+        var lastRow = Math.Max(4, rowNumber - 1);
 
-        var reportRange = sheet.Range(3, 1, lastRow, 5);
+        var reportRange = sheet.Range(4, 1, lastRow, 5);
         sheet.Range(1, 1, lastRow, 5).Style.Alignment.WrapText = true;
         sheet.Range(1, 1, lastRow, 5).Style.Font.FontName = FontName;
         reportRange.Style.Alignment.Vertical = XLAlignmentVerticalValues.Top;
@@ -171,17 +174,17 @@ public sealed class ClosedXmlWeeklyReportExporter : IWeeklyReportExporter
         // Constructive borders: draw only the lines that are actually
         // wanted, never a blanket InsideBorder/OutsideBorder over the data
         // area followed by clearing specific edges back off — that pattern
-        // renders inconsistently across viewers. Row 3 (the header) already
-        // got its own full thin border above; everything from row 4 down is
+        // renders inconsistently across viewers. Row 4 (the header) already
+        // got its own full thin border above; everything from row 5 down is
         // built here from nothing.
-        if (lastRow >= 4)
+        if (lastRow >= 5)
         {
             // Vertical lines: a left edge on every column A-E (i.e. the
             // four internal dividers plus the table's outer left edge) and
             // the table's outer right edge on column E, continuous for
             // every row of every block — items and blanks alike.
-            sheet.Range(4, 1, lastRow, 5).Style.Border.LeftBorder = XLBorderStyleValues.Thin;
-            sheet.Range(4, 5, lastRow, 5).Style.Border.RightBorder = XLBorderStyleValues.Thin;
+            sheet.Range(5, 1, lastRow, 5).Style.Border.LeftBorder = XLBorderStyleValues.Thin;
+            sheet.Range(5, 5, lastRow, 5).Style.Border.RightBorder = XLBorderStyleValues.Thin;
 
             // Horizontal lines: only the last row of each day block gets a
             // bottom edge — the boundary before the next day (and, for the
@@ -202,10 +205,11 @@ public sealed class ClosedXmlWeeklyReportExporter : IWeeklyReportExporter
         sheet.Rows(1, lastRow).AdjustToContents();
 
         sheet.PageSetup.PageOrientation = XLPageOrientation.Landscape;
+        sheet.PageSetup.PaperSize = XLPaperSize.A4Paper;
         sheet.PageSetup.PagesWide = 1;
         sheet.PageSetup.PagesTall = 0;
         sheet.PageSetup.PrintAreas.Add($"A1:E{lastRow}");
-        sheet.SheetView.FreezeRows(3);
+        sheet.SheetView.FreezeRows(4);
 
         workbook.SaveAs(path);
         return Task.FromResult(path);

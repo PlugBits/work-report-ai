@@ -599,9 +599,11 @@ ClosedXML writes one worksheet named `業務週報`, matching the layout of the
 user's real submitted weekly report. Row 1 holds the merged title (A1:C1); E1
 and E2 hold the company name and employee name as two stacked cells in the
 report's last column (replacing the earlier single "company / employee" title
-cell). Row 3 is the header row (日付/曜日/項目・案件・目標金額/活動内容/結果・
-決定事項・今後の課題) with a blue fill and white bold text (replacing the
-earlier light-gray header). `WorkLogAI.Core`'s pure `DailyReportGrouper` groups
+cell). Row 3 is a completely blank spacer row — no content, borders, or fill —
+between the title area and the header. Row 4 is the header row (日付/曜日/項目・
+案件・目標金額/活動内容/結果・決定事項・今後の課題) with a blue fill and white
+bold text (replacing the earlier light-gray header). `WorkLogAI.Core`'s pure
+`DailyReportGrouper` groups
 the already-filtered, chronologically sorted `ReportRow`s into one
 `DailyReportRow` per calendar day — `ReportRow.Category` plays no part in
 grouping — and numbers each day's items in arrival order (circled digits ①–⑳
@@ -619,7 +621,7 @@ in parentheses, e.g. `(月)` — each written only on the block's first item row
 every other row in the block — further item rows and all blank rows — leaves
 both columns A and B empty, so a day never repeats its date or weekday. Rows
 are wrapped, bordered, and configured for landscape printing at one page
-wide; the data area has no merged cells. The worksheet's default font is set
+wide on A4 paper by default; the data area has no merged cells. The worksheet's default font is set
 to BIZ UDPゴシック right after worksheet creation and again explicitly on the
 title, header, and data ranges (a single range covering rows 1 through the
 last written row, so it also covers every new item row without a separate
@@ -640,13 +642,13 @@ report's pixel measurements: A (日付) 20.14 (≈146px), B (曜日) 7.0 (≈54p
 narrow new weekday-only column), C (項目) 39.71 (≈283px), D (活動内容) 69.29
 (≈490px), E (結果・決定事項) 60.14 (≈426px).
 
-Borders in the data area (rows 4 and down) are drawn **constructively**: the
+Borders in the data area (rows 5 and down) are drawn **constructively**: the
 exporter never applies a blanket `Border.InsideBorder`/`OutsideBorder` over
 the data area and then clears specific edges back off — that draw-then-clear
 pattern rendered inconsistently across viewers. Instead only the intended
 edges are set, once, from nothing. Vertical lines are continuous down the
 whole table regardless of block or row type: `LeftBorder = Thin` on every
-cell in columns A–E for every row from 4 to the last row (giving each column
+cell in columns A–E for every row from 5 to the last row (giving each column
 its left divider, including the table's outer left edge on column A) plus
 `RightBorder = Thin` on column E alone for that same row range (the table's
 outer right edge). Horizontal lines appear only at day boundaries: each day
@@ -655,9 +657,9 @@ day whose item count already meets the minimum) gets `BottomBorder = Thin`
 across A–E — the line between that day and the next, and, on the final
 block, the bottom of the table — and no other row in the data area gets any
 `TopBorder` or `BottomBorder` at all, so there are no lines between item
-rows, between or around blank rows, or under row 4 (the boundary with the
+rows, between or around blank rows, or under row 5 (the boundary with the
 header is provided by the header row's own full thin border, set separately
-via `OutsideBorder`/`InsideBorder` on the 3-row-tall header range only).
+via `OutsideBorder`/`InsideBorder` on the header row (row 4) only).
 
 `ClosedXmlWeeklyReportExporter.ExportAsync` and the newer `ExportMonthAsync` share
 one private `RenderAsync(titleText, fileName, rows, outputDirectory, identity, ct)`
