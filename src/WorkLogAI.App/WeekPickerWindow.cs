@@ -4,6 +4,7 @@ using System.Windows.Input;
 using WorkLogAI.Core;
 using Button = System.Windows.Controls.Button;
 using ComboBox = System.Windows.Controls.ComboBox;
+using KeyEventArgs = System.Windows.Input.KeyEventArgs;
 
 namespace WorkLogAI.App;
 
