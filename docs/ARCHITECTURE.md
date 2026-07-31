@@ -149,7 +149,69 @@ requested `WeekRange` into one `DayCoverage` per day (date, day-of-week,
 candidate count, weekday flag). `CandidateWindow` renders all 7 days every time
 cards are rendered; a day with zero candidates is an interactive button
 (highlighted more strongly for weekdays than weekends) that calls the same manual
-row path as the **1行追加** action, pre-filled with that day's date.
+row path as the **1行追加** action, pre-filled with that day's date. The bar folds
+only *selected* candidates' work dates (`CandidateWindow.SelectedWorkDates()`), so
+it stays consistent with the 出力される行 section and the export preview's
+blank-weekday warning below — all three answer "what would an export right now
+contain?" the same way.
+
+## Weekly-review two-section card list, badges, and export preview
+
+`CandidateWindow.RenderCards` splits the card list (after the existing day/low-
+confidence filters) into two sections instead of one flat list:
+
+```text
+出力される行 ({n}件)      -- Selected == true, OrderBy(parsed WorkDateText),
+                              unparseable dates sort last, stable within a date.
+                              This section IS what MapSelected/the exporter will
+                              produce.
+除外中の行 ({m}件)        -- an Expander, collapsed by default, Selected == false,
+   (Expander)                cards dimmed (#F3F4F6 background, 0.75 opacity)
+```
+
+Each `CandidateEditor` subscribes exactly once to its own `PropertyChanged`, at
+creation time (`RegisterSelectionListener`, called from `LoadAsync`,
+`MergeCandidates`, `AddManualRowAsync`, and `PersistAsync`'s post-save rebuild —
+never re-subscribed on render). A `Selected` change queues a debounced
+`Dispatcher.BeginInvoke(RenderCards)` rather than rendering inline, so the render
+never re-enters while the checkbox click (or a `foreach` toggle like **全採用**)
+that raised the change is still being processed; a `_renderQueued` flag collapses
+a burst of changes into one re-render. The 除外中の行 `Expander`'s open/closed
+state is tracked in a separate `_excludedExpanded` field and reapplied on every
+render, since the `Expander` control itself is recreated each time.
+
+Each card also gets a small colored origin badge, top-left of the header row
+before the 採用 checkbox, resolved by the pure `CandidateBadge.Resolve(origin,
+firstSourceType)` (Core) once per `CandidateEditor` at creation
+(`CandidateWindow.ResolveBadge`, using the `_sourceEventsById` dictionary
+populated at load time and kept current on manual-row add) and stored on the
+editor rather than recomputed per render: `ai` → **AI** (`#2563EB`), `manual` →
+**手動追加** (`#0D9488`), `local` → by its first backing source event's
+`SourceTypes` (メモ/議事録/Git/Codex/ファイル/メール/予定, falling back to
+ローカル). The App layer's only job is mapping `Badge.HexColor` to a
+`SolidColorBrush` (`CandidateWindow.BrushFromHex`). A muted guidance line under
+the action bar tells the user AI rows are normally what to keep, and that a
+「メモ」 badge left in 出力される行 means the AI did not pick that memo up.
+
+`LocalSourceEventMapper` (git/codex/file/mail/calendar → `Selected: false`;
+manual/meeting → `Selected: true`) and `LocalCandidateSuppressor` (deselects
+local rows fully superseded by AI evidence) are unchanged — under the two-section
+layout their already-existing `Selected: false` output is what lands raw local
+rows in 除外中の行 automatically, with no new data-layer behavior needed.
+
+`Excel出力` no longer shows a bare blank-weekday confirmation `MessageBox`.
+Instead, after `PersistAsync`/`TryBuildCandidates`/`MapSelected` and the
+zero-rows check, `CandidateWindow.ExportAsync` computes the same blank-weekday
+list (via `WeekCoverageCalculator.Calculate(_range, SelectedWorkDates())`) and
+opens `ExportPreviewWindow` (modeled on `WeekPickerWindow`'s dialog style, but
+700×600 and resizable) with the mapped `ReportRow`s, the `WeekRange`, and the
+blank-weekday labels. The dialog renders a read-only `DailyReportGrouper.Group`
+view — per day a bold `{yyyy/MM/dd} ({曜})` line, then per item
+`{circled number} {WorkItem} — {Activity}` plus an indented `→ {ResultOrNext}`
+line when non-blank — with an amber warning banner above it when any selected
+weekday is blank. Cancel aborts the export; **出力** proceeds to the unchanged
+`IWeeklyReportExporter.ExportAsync` call and `ExportResultPrompt`. The monthly
+export flow (`App.xaml.cs`'s **月次まとめを出力…**) is untouched by this rework.
 
 ## Post-Phase 3 generation-quality and reliability flow
 

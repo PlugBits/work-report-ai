@@ -32,10 +32,21 @@ public sealed class CandidateWindow : Window
     private readonly List<string> _pendingSuppressedSourceRefs = [];
     private readonly List<Guid> _pendingSoftDeletedQuickNoteIds = [];
     private readonly StackPanel _notesList = new();
+    // Populated at load time and kept up to date whenever a new source event is
+    // created (manual row add); used only to resolve each card's origin badge
+    // (CandidateBadge.Resolve needs the backing event's SourceType for local rows).
+    private readonly Dictionary<Guid, SourceEvent> _sourceEventsById = new();
     private List<CandidateEditor> _items = [];
     private IReadOnlyList<QuickNote> _weekNotes = [];
     private bool _lowConfidenceOnly;
     private DateOnly? _dayFilter;
+    // Preserves the 除外中の行 Expander's open/closed state across RenderCards()
+    // calls, since the Expander control itself is recreated on every render.
+    private bool _excludedExpanded;
+    // Debounces the deferred re-render triggered by a card's 採用 checkbox toggle
+    // (see RegisterSelectionListener) so a burst of Selected changes (e.g. 全採用)
+    // only queues one RenderCards call.
+    private bool _renderQueued;
 
     public CandidateWindow(AppServices services, WeekRange range, string? statusBanner = null)
     {
@@ -70,6 +81,17 @@ public sealed class CandidateWindow : Window
         actions.Children.Add(exportButton);
         DockPanel.SetDock(actions, Dock.Top);
         root.Children.Add(actions);
+
+        var guidance = new TextBlock
+        {
+            Text = "通常はAI行を採用します。「メモ」バッジの行が出力側に残っている場合、" +
+                   "AIが拾えなかったメモです — 内容を確認してください。",
+            Foreground = Brushes.DimGray,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 10)
+        };
+        DockPanel.SetDock(guidance, Dock.Top);
+        root.Children.Add(guidance);
 
         if (!string.IsNullOrWhiteSpace(statusBanner))
         {
@@ -131,14 +153,66 @@ public sealed class CandidateWindow : Window
         var candidates = await _services.Candidates.ListAsync(_range.Start);
         var evidenceIds = candidates.SelectMany(item => item.SourceEventIds).Distinct().ToArray();
         var sourceEvents = await _services.SourceEvents.GetByIdsAsync(evidenceIds);
-        var byId = sourceEvents.ToDictionary(item => item.Id);
+        _sourceEventsById.Clear();
+        foreach (var sourceEvent in sourceEvents)
+        {
+            _sourceEventsById[sourceEvent.Id] = sourceEvent;
+        }
         _items = candidates.Select(candidate =>
-            new CandidateEditor(candidate, EvidenceFormatter.Describe(candidate.SourceEventIds, byId))).ToList();
+        {
+            var editor = new CandidateEditor(
+                candidate,
+                EvidenceFormatter.Describe(candidate.SourceEventIds, _sourceEventsById),
+                ResolveBadge(candidate));
+            RegisterSelectionListener(editor);
+            return editor;
+        }).ToList();
 
         var bounds = WeekRangeTimeBounds.Local(_range);
         _weekNotes = await _services.Notes.ListAsync(bounds.From, bounds.To);
 
         RenderCards();
+    }
+
+    /// <summary>
+    /// Resolves a card's origin badge (see <see cref="CandidateBadge"/>) from its
+    /// origin and, for local-origin rows, its first backing source event's type.
+    /// Called once whenever a <see cref="CandidateEditor"/> is created so the badge
+    /// stays fixed across re-renders instead of being recomputed each time.
+    /// </summary>
+    private CandidateBadge.Badge ResolveBadge(ReportCandidate candidate)
+    {
+        string? firstSourceType = candidate.SourceEventIds.Count > 0
+            && _sourceEventsById.TryGetValue(candidate.SourceEventIds[0], out var sourceEvent)
+                ? sourceEvent.SourceType
+                : null;
+        return CandidateBadge.Resolve(candidate.Origin, firstSourceType);
+    }
+
+    /// <summary>
+    /// Subscribes once, at creation time, to a card's Selected change so toggling
+    /// 採用 moves it between the 出力される行/除外中の行 sections. Deferred via
+    /// <see cref="Dispatcher"/> to avoid re-entering <see cref="RenderCards"/> while
+    /// the checkbox click that raised the change is still being processed, and
+    /// debounced so a burst of changes (e.g. 全採用) triggers only one re-render.
+    /// </summary>
+    private void RegisterSelectionListener(CandidateEditor item)
+    {
+        item.PropertyChanged += OnEditorPropertyChanged;
+    }
+
+    private void OnEditorPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(CandidateEditor.Selected) || _renderQueued)
+        {
+            return;
+        }
+        _renderQueued = true;
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            _renderQueued = false;
+            RenderCards();
+        }));
     }
 
     private void RenderCards()
@@ -155,19 +229,84 @@ public sealed class CandidateWindow : Window
                 DateOnly.TryParse(item.WorkDateText, out var date) && date == filterDate);
         }
         var visibleItems = visible.ToList();
-        foreach (var item in visibleItems)
-        {
-            _cards.Children.Add(CreateCard(item));
-        }
+
         if (visibleItems.Count == 0)
         {
             _cards.Children.Add(_dayFilter is { } emptyFilterDate
                 ? CreateEmptyDayFilterMessage(emptyFilterDate)
                 : new TextBlock { Text = "表示する候補がありません。", Margin = new Thickness(8) });
+            RenderCoverageBar();
+            RenderNotesSidebar();
+            return;
         }
+
+        // "出力される行" IS what the export will contain: selected cards only,
+        // sorted by parsed work date ascending (unparseable dates sort last),
+        // stable within a date (OrderBy is a stable sort, so ties keep their
+        // current arrival order in _items).
+        var selectedItems = visibleItems
+            .Where(item => item.Selected)
+            .OrderBy(SortDateKey)
+            .ToList();
+        var excludedItems = visibleItems.Where(item => !item.Selected).ToList();
+
+        _cards.Children.Add(new TextBlock
+        {
+            Text = $"出力される行 ({selectedItems.Count}件)",
+            FontWeight = FontWeights.Bold,
+            Margin = new Thickness(0, 0, 0, 8)
+        });
+        if (selectedItems.Count == 0)
+        {
+            _cards.Children.Add(new TextBlock
+            {
+                Text = "採用された候補がありません。",
+                Foreground = Brushes.DimGray,
+                Margin = new Thickness(8, 0, 0, 8)
+            });
+        }
+        else
+        {
+            foreach (var item in selectedItems)
+            {
+                _cards.Children.Add(CreateCard(item));
+            }
+        }
+
+        var excludedPanel = new StackPanel { Margin = new Thickness(0, 8, 0, 0) };
+        if (excludedItems.Count == 0)
+        {
+            excludedPanel.Children.Add(new TextBlock
+            {
+                Text = "除外中の候補はありません。",
+                Foreground = Brushes.DimGray,
+                Margin = new Thickness(8)
+            });
+        }
+        else
+        {
+            foreach (var item in excludedItems)
+            {
+                excludedPanel.Children.Add(CreateCard(item, dimmed: true));
+            }
+        }
+        var excludedExpander = new Expander
+        {
+            Header = $"除外中の行 ({excludedItems.Count}件)",
+            IsExpanded = _excludedExpanded,
+            Margin = new Thickness(0, 12, 0, 0),
+            Content = excludedPanel
+        };
+        excludedExpander.Expanded += (_, _) => _excludedExpanded = true;
+        excludedExpander.Collapsed += (_, _) => _excludedExpanded = false;
+        _cards.Children.Add(excludedExpander);
+
         RenderCoverageBar();
         RenderNotesSidebar();
     }
+
+    private static DateOnly SortDateKey(CandidateEditor item) =>
+        DateOnly.TryParse(item.WorkDateText, out var date) ? date : DateOnly.MaxValue;
 
     private FrameworkElement CreateEmptyDayFilterMessage(DateOnly date)
     {
@@ -179,6 +318,18 @@ public sealed class CandidateWindow : Window
         panel.Children.Add(addButton);
         return panel;
     }
+
+    /// <summary>
+    /// The work dates of currently-selected candidates — what the coverage bar and
+    /// the export preview's blank-weekday warning both compute from, so the two
+    /// stay consistent with each other and with the 出力される行 section (all three
+    /// reflect exactly what an export right now would contain).
+    /// </summary>
+    private IEnumerable<DateOnly> SelectedWorkDates() => _items
+        .Where(item => item.Selected)
+        .Select(item => DateOnly.TryParse(item.WorkDateText, out var date) ? (DateOnly?)date : null)
+        .Where(date => date.HasValue)
+        .Select(date => date!.Value);
 
     private void RenderCoverageBar()
     {
@@ -193,11 +344,7 @@ public sealed class CandidateWindow : Window
 
         _coverageBar.Children.Add(CreateAllChip());
 
-        var candidateDates = _items
-            .Select(item => DateOnly.TryParse(item.WorkDateText, out var date) ? (DateOnly?)date : null)
-            .Where(date => date.HasValue)
-            .Select(date => date!.Value);
-        var coverage = WeekCoverageCalculator.Calculate(_range, candidateDates);
+        var coverage = WeekCoverageCalculator.Calculate(_range, SelectedWorkDates());
         foreach (var day in coverage)
         {
             _coverageBar.Children.Add(CreateCoverageDayElement(day));
@@ -246,8 +393,8 @@ public sealed class CandidateWindow : Window
             ToolTip = day.HasCandidates
                 ? "クリックしてこの日の候補だけを表示します。"
                 : day.IsWeekday
-                    ? "この日の候補がありません。クリックして絞り込みます。"
-                    : "この日の候補はありません（週末）。クリックして絞り込みます。"
+                    ? "この日の採用済み候補がありません。クリックして絞り込みます。"
+                    : "この日の採用済み候補はありません（週末）。クリックして絞り込みます。"
         };
         button.Click += (_, _) =>
         {
@@ -302,7 +449,9 @@ public sealed class CandidateWindow : Window
         }
     }
 
-    private static string JapaneseDayOfWeek(DayOfWeek dayOfWeek) => dayOfWeek switch
+    // internal so ExportPreviewWindow's per-day header ("{yyyy/MM/dd} ({曜})") can
+    // reuse the exact same Japanese weekday labels as the review cards/coverage bar.
+    internal static string JapaneseDayOfWeek(DayOfWeek dayOfWeek) => dayOfWeek switch
     {
         DayOfWeek.Monday => "月",
         DayOfWeek.Tuesday => "火",
@@ -314,10 +463,26 @@ public sealed class CandidateWindow : Window
         _ => "?"
     };
 
-    private Border CreateCard(CandidateEditor item)
+    private Border CreateCard(CandidateEditor item, bool dimmed = false)
     {
         var panel = new StackPanel();
         var headerRow = new DockPanel { LastChildFill = false, Margin = new Thickness(0, 0, 0, 6) };
+        var badge = new Border
+        {
+            Background = BrushFromHex(item.BadgeHexColor),
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(6, 1, 6, 1),
+            Margin = new Thickness(0, 0, 8, 0),
+            Child = new TextBlock
+            {
+                Text = item.BadgeLabel,
+                Foreground = Brushes.White,
+                FontWeight = FontWeights.Bold,
+                FontSize = 11
+            }
+        };
+        DockPanel.SetDock(badge, Dock.Left);
+        headerRow.Children.Add(badge);
         var selected = BoundCheckBox("採用", item, nameof(item.Selected));
         selected.Margin = new Thickness(0);
         DockPanel.SetDock(selected, Dock.Left);
@@ -374,9 +539,9 @@ public sealed class CandidateWindow : Window
             Margin = new Thickness(0, 8, 0, 0)
         });
 
-        return new Border
+        var border = new Border
         {
-            Background = Brushes.White,
+            Background = dimmed ? new SolidColorBrush(Color.FromRgb(0xF3, 0xF4, 0xF6)) : Brushes.White,
             BorderBrush = new SolidColorBrush(Color.FromRgb(0xE5, 0xE7, 0xEB)),
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(8),
@@ -384,7 +549,15 @@ public sealed class CandidateWindow : Window
             Margin = new Thickness(0, 0, 0, 10),
             Child = panel
         };
+        if (dimmed)
+        {
+            border.Opacity = 0.75;
+        }
+        return border;
     }
+
+    private static SolidColorBrush BrushFromHex(string hex) =>
+        new((Color)System.Windows.Media.ColorConverter.ConvertFromString(hex)!);
 
     private void MergeCandidates(object sender, RoutedEventArgs e)
     {
@@ -399,7 +572,13 @@ public sealed class CandidateWindow : Window
                 .Where(previous => previous.SourceEventIds.Intersect(item.SourceEventIds).Any())
                 .Select(previous => previous.EvidenceDescription)
                 .Distinct();
-            return new CandidateEditor(item with { Edited = true }, string.Join("\n", evidence));
+            var mergedCandidate = item with { Edited = true };
+            var editor = new CandidateEditor(
+                mergedCandidate,
+                string.Join("\n", evidence),
+                ResolveBadge(mergedCandidate));
+            RegisterSelectionListener(editor);
+            return editor;
         }).ToList();
         RenderCards();
     }
@@ -421,6 +600,7 @@ public sealed class CandidateWindow : Window
             $"review-manual:{Guid.NewGuid():D}",
             1);
         await _services.SourceEvents.InsertIfNewAsync(sourceEvent);
+        _sourceEventsById[sourceEvent.Id] = sourceEvent;
         var candidate = new ReportCandidate(
             Guid.NewGuid(),
             _range.Start,
@@ -436,8 +616,13 @@ public sealed class CandidateWindow : Window
             false,
             null,
             CandidateOrigins.Manual);
-        _items.Add(new CandidateEditor(candidate, EvidenceFormatter.Describe([sourceEvent.Id],
-            new Dictionary<Guid, SourceEvent> { [sourceEvent.Id] = sourceEvent })));
+        var editor = new CandidateEditor(
+            candidate,
+            EvidenceFormatter.Describe([sourceEvent.Id],
+                new Dictionary<Guid, SourceEvent> { [sourceEvent.Id] = sourceEvent }),
+            ResolveBadge(candidate));
+        RegisterSelectionListener(editor);
+        _items.Add(editor);
         _lowConfidenceOnly = false;
         RenderCards();
     }
@@ -547,7 +732,13 @@ public sealed class CandidateWindow : Window
                 MessageBox.Show(this, "採用された候補がありません。", "WorkLog AI");
                 return;
             }
-            if (!ConfirmBlankWeekdays())
+
+            var blankWeekdayLabels = WeekCoverageCalculator.Calculate(_range, SelectedWorkDates())
+                .Where(day => day.IsWeekday && !day.HasCandidates)
+                .Select(day => JapaneseDayOfWeek(day.DayOfWeek))
+                .ToList();
+            var preview = new ExportPreviewWindow(rows, _range, blankWeekdayLabels) { Owner = this };
+            if (preview.ShowDialog() != true)
             {
                 return;
             }
@@ -570,31 +761,6 @@ public sealed class CandidateWindow : Window
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
         }
-    }
-
-    private bool ConfirmBlankWeekdays()
-    {
-        var selectedDates = _items
-            .Where(item => item.Selected)
-            .Select(item => DateOnly.TryParse(item.WorkDateText, out var date) ? (DateOnly?)date : null)
-            .Where(date => date.HasValue)
-            .Select(date => date!.Value);
-        var blankWeekdays = WeekCoverageCalculator.Calculate(_range, selectedDates)
-            .Where(day => day.IsWeekday && !day.HasCandidates)
-            .ToList();
-        if (blankWeekdays.Count == 0)
-        {
-            return true;
-        }
-
-        var days = string.Join(", ", blankWeekdays.Select(day => JapaneseDayOfWeek(day.DayOfWeek)));
-        var answer = MessageBox.Show(
-            this,
-            $"空白の平日があります: {days}\nこのままExcelを出力しますか？",
-            "WorkLog AI",
-            MessageBoxButton.YesNo,
-            MessageBoxImage.Warning);
-        return answer == MessageBoxResult.Yes;
     }
 
     private async Task<bool> PersistAsync()
@@ -644,7 +810,11 @@ public sealed class CandidateWindow : Window
             }
         }
         _items = candidates.Select((item, index) =>
-            new CandidateEditor(item, _items[index].EvidenceDescription)).ToList();
+        {
+            var editor = new CandidateEditor(item, _items[index].EvidenceDescription, _items[index].Badge);
+            RegisterSelectionListener(editor);
+            return editor;
+        }).ToList();
         return true;
     }
 
@@ -738,7 +908,7 @@ public sealed class CandidateWindow : Window
         private string _category;
         private bool _selected;
 
-        public CandidateEditor(ReportCandidate candidate, string evidenceDescription)
+        public CandidateEditor(ReportCandidate candidate, string evidenceDescription, CandidateBadge.Badge badge)
         {
             Candidate = candidate;
             _workDateText = candidate.WorkDate.ToString("yyyy-MM-dd");
@@ -749,6 +919,7 @@ public sealed class CandidateWindow : Window
             _category = candidate.Category;
             _selected = candidate.Selected;
             EvidenceDescription = evidenceDescription;
+            Badge = badge;
         }
 
         public ReportCandidate Candidate { get; }
@@ -756,6 +927,9 @@ public sealed class CandidateWindow : Window
         public double Confidence => Candidate.Confidence;
         public string? ConfirmationQuestion => Candidate.ConfirmationQuestion;
         public string EvidenceDescription { get; }
+        public CandidateBadge.Badge Badge { get; }
+        public string BadgeLabel => Badge.Label;
+        public string BadgeHexColor => Badge.HexColor;
 
         public string WorkDateText { get => _workDateText; set => Set(ref _workDateText, value); }
         public string WorkItem { get => _workItem; set => Set(ref _workItem, value); }
