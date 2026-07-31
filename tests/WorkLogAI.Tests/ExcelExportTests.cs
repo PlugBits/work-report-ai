@@ -39,9 +39,10 @@ public sealed class ExcelExportTests
         Assert.Equal("社内\n2026/07/28\n山田", sheet.Cell("A4").GetString());
         Assert.Equal("① 最初", sheet.Cell("C4").GetString());
 
-        // Different-date spacer row: completely empty and borderless.
+        // Different-date spacer row: completely empty but still part of the
+        // continuous bordered grid, like every other row.
         Assert.Equal(string.Empty, sheet.Cell("A5").GetString());
-        Assert.Equal(XLBorderStyleValues.None, sheet.Cell("A5").Style.Border.LeftBorder);
+        Assert.Equal(XLBorderStyleValues.Thin, sheet.Cell("A5").Style.Border.LeftBorder);
 
         Assert.Equal("社内\n2026/07/30\n山田", sheet.Cell("A6").GetString());
         Assert.Equal("① 二番目", sheet.Cell("C6").GetString());
@@ -255,12 +256,19 @@ public sealed class ExcelExportTests
         Assert.Equal("社外\n2026/07/28\n山田", sheet.Cell("A5").GetString());
         Assert.NotEqual(XLBorderStyleValues.None, sheet.Cell("A5").Style.Border.LeftBorder);
 
-        // Exactly one blank, borderless spacer row (row 6) before the next date,
-        // shrunk to a slim 6pt visual gap.
+        // Exactly one blank spacer row (row 6) before the next date. It is an
+        // ordinary row within the continuous bordered grid: fully bordered,
+        // completely empty cells, and no forced height (so post-export
+        // auto-fit treats it like any other empty row).
         Assert.Equal(string.Empty, sheet.Cell("A6").GetString());
-        Assert.Equal(XLBorderStyleValues.None, sheet.Cell("A6").Style.Border.LeftBorder);
-        Assert.Equal(XLBorderStyleValues.None, sheet.Cell("D6").Style.Border.RightBorder);
-        Assert.Equal(6, sheet.Row(6).Height);
+        Assert.Equal(string.Empty, sheet.Cell("B6").GetString());
+        Assert.Equal(string.Empty, sheet.Cell("C6").GetString());
+        Assert.Equal(string.Empty, sheet.Cell("D6").GetString());
+        Assert.Equal(XLBorderStyleValues.Thin, sheet.Cell("A6").Style.Border.LeftBorder);
+        Assert.Equal(XLBorderStyleValues.Thin, sheet.Cell("D6").Style.Border.RightBorder);
+        Assert.Equal(XLBorderStyleValues.Thin, sheet.Cell("A6").Style.Border.TopBorder);
+        Assert.Equal(XLBorderStyleValues.Thin, sheet.Cell("A6").Style.Border.BottomBorder);
+        Assert.True(sheet.Row(6).Height >= 10);
 
         Assert.Equal("社内\n2026/07/30\n山田", sheet.Cell("A7").GetString());
         Assert.Equal("① 手動メモ", sheet.Cell("B7").GetString());
