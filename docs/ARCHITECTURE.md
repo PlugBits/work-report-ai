@@ -511,30 +511,51 @@ pure `DailyReportGrouper` groups the already-filtered, chronologically sorted
 `ReportRow`s into one `DailyReportRow` per calendar day — `ReportRow.Category`
 plays no part in grouping — and numbers each day's items in arrival order
 (circled digits ①–⑳ via `DailyReportGrouper.CircledNumber`, falling back to
-`(21)`, `(22)`, … beyond that); the exporter renders exactly one sheet content
-row per `DailyReportRow` — never one row per `ReportRow` — with the 日時 cell
-holding exactly two stacked lines (the date and, in parentheses, the
-single-character Japanese weekday, e.g. `(月)`), the 項目/活動内容 cells holding
-one numbered line per item, and the 結果・決定事項 cell holding only the
-numbered items whose result text is non-blank. Rows are wrapped, bordered, and
-configured for landscape printing at one page wide; the data area has no
-merged cells. The worksheet's default font is set to BIZ UDPゴシック right
-after worksheet creation and again explicitly on the title, header, and data
-ranges; it ships with Windows 10 1809+ and Windows 11, so no separate install
-is needed. Every day's block — its content row plus enough blank rows to pad
-it to a uniform minimum of 4 sheet rows — occupies the same visual size
-regardless of item count; every date gets this treatment, including the last
-one. A single blanket border range covers the header plus the entire data
-area, blank rows included, so the grid never breaks; after that blanket pass,
-each block's internal row boundaries (content-to-first-blank, and each pair of
-consecutive blanks) are individually cleared back to no border on both
-adjacent edges, so the block reads as one continuous visual region, while its
-own bottom edge (the last blank row's bottom border — the boundary before the
-next day's block) and left/right edges stay thin. Blank rows get no explicit
-height, so they stay ordinary rows that `AdjustToContents` and any later
-manual auto-fit re-run in Excel size like any other empty row. Print area and
-freeze-row math account for the extra blank rows automatically since they are
-folded into the same running row counter as the data rows.
+`(21)`, `(22)`, … beyond that). The exporter renders **one sheet row per
+item**, not one row per day: each `DailyReportItem` in a `DailyReportRow` gets
+its own row, with the same circled number written into the 項目 (B) and
+活動内容 (C) cells so the two line up horizontally on that row even after text
+wraps, and the 結果・決定事項 (D) cell on that row holding the numbered result
+text only when it is non-blank (an empty string otherwise — never a stray
+number with no text). The 日時 (A) cell holding the two stacked lines (the
+date and, in parentheses, the single-character Japanese weekday, e.g. `(月)`)
+is written only on the block's first item row; every other row in the block —
+further item rows and all blank rows — leaves column A empty, so a day never
+repeats its date. Rows are wrapped, bordered, and configured for landscape
+printing at one page wide; the data area has no merged cells. The worksheet's
+default font is set to BIZ UDPゴシック right after worksheet creation and
+again explicitly on the title, header, and data ranges (a single range
+covering rows 1 through the last written row, so it also covers every new
+item row without a separate per-row font call); it ships with Windows 10
+1809+ and Windows 11, so no separate install is needed. Every day's block —
+its item rows plus enough blank rows to pad it to a uniform minimum of 4
+sheet rows, with at least one trailing blank row always present even when the
+item count alone already reaches or exceeds 4 — occupies at least the same
+visual size regardless of item count; every date gets this treatment,
+including the last one. Blank rows get no explicit height, so they stay
+ordinary rows that `AdjustToContents` and any later manual auto-fit re-run in
+Excel size like any other empty row. Print area and freeze-row math account
+for the item and blank rows automatically since they are folded into the same
+running row counter.
+
+Borders in the data area (rows 4 and down) are drawn **constructively**: the
+exporter never applies a blanket `Border.InsideBorder`/`OutsideBorder` over
+the data area and then clears specific edges back off — that draw-then-clear
+pattern rendered inconsistently across viewers. Instead only the intended
+edges are set, once, from nothing. Vertical lines are continuous down the
+whole table regardless of block or row type: `LeftBorder = Thin` on every
+cell in columns A–D for every row from 4 to the last row (giving each column
+its left divider, including the table's outer left edge on column A) plus
+`RightBorder = Thin` on column D alone for that same row range (the table's
+outer right edge). Horizontal lines appear only at day boundaries: each day
+block's *last* row (its last blank row, or its last item row on the rare
+day whose item count already meets the minimum) gets `BottomBorder = Thin`
+across A–D — the line between that day and the next, and, on the final
+block, the bottom of the table — and no other row in the data area gets any
+`TopBorder` or `BottomBorder` at all, so there are no lines between item
+rows, between or around blank rows, or under row 4 (the boundary with the
+header is provided by the header row's own full thin border, set separately
+via `OutsideBorder`/`InsideBorder` on the 3-row-tall header range only).
 
 `ClosedXmlWeeklyReportExporter.ExportAsync` and the newer `ExportMonthAsync` share
 one private `RenderAsync(titleText, fileName, rows, outputDirectory, identity, ct)`

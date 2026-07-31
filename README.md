@@ -369,18 +369,26 @@ The generated file is named
 submitted weekly report: a title row (A1:C1) plus the company name (D1) and
 employee name (D2) stacked in their own cells, a blue-filled white-bold header
 row with the captions 日時/項目・案件・目標金額/活動内容/結果・決定事項・今後の課題,
-and **one row per calendar day** (only days with at least one selected item).
-Each day's 日時 cell holds exactly two stacked lines — the date (`yyyy/MM/dd`)
-and the single-character Japanese weekday in parentheses, e.g. `(月)`. Each
-day's block occupies a uniform minimum of 4 sheet rows (the content row plus
-blank rows padding it out), so every day reads as the same visual size
-regardless of item count; the blank rows' internal borders are opened so the
-block reads as one continuous region, with a Thin line only at the boundary
-before the next day. Multiple items on the same day are numbered with circled
-digits (①②③…, falling back to `(21)`, `(22)`, … past ①-⑳) so the 項目, 活動内容,
-and 結果・決定事項 columns line up by number; a day's 結果・決定事項 cell lists
-only the numbered items whose result text is non-blank. The title (and the
-company/employee name shown alongside
+and a **day block per calendar day** (only days with at least one selected
+item) made up of **one sheet row per item**, so a day's 項目, 活動内容, and
+結果・決定事項 for a given item always sit on the same row and stay aligned
+even once text wraps. Each day's 日時 cell holds exactly two stacked lines —
+the date (`yyyy/MM/dd`) and the single-character Japanese weekday in
+parentheses, e.g. `(月)` — written only on the block's first row; every other
+row in the block leaves 日時 empty. Multiple items on the same day are
+numbered with circled digits (①②③…, falling back to `(21)`, `(22)`, … past
+①-⑳), with the same number repeated on each item's 項目 and 活動内容 cells on
+its own row so the two line up by number; that row's 結果・決定事項 cell holds
+the numbered result text only when it is non-blank, and is otherwise left
+empty. Each day's block is padded with blank rows so it always totals at
+least 4 sheet rows and always keeps at least one trailing blank row, even on
+a day with 4 or more items, so every day reads as at least the same visual
+size and the boundary before the next day is always visible. Borders are
+drawn constructively, never as a blanket border cleared back off in places:
+vertical lines run continuously down every column for every row of the table,
+and a horizontal line appears only at the bottom of each day's block (the
+boundary before the next day) — no lines appear between item rows or around
+blank rows. The title (and the company/employee name shown alongside
 it) are configurable in **設定**.
 
 ## Security
