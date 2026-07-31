@@ -6,6 +6,8 @@ using Button = System.Windows.Controls.Button;
 using ComboBox = System.Windows.Controls.ComboBox;
 using CheckBox = System.Windows.Controls.CheckBox;
 using TextBox = System.Windows.Controls.TextBox;
+using TabControl = System.Windows.Controls.TabControl;
+using TabItem = System.Windows.Controls.TabItem;
 
 namespace WorkLogAI.App;
 
@@ -50,7 +52,7 @@ public sealed class SettingsWindow : Window
     private readonly Func<string, string, GraphAuthService> _graphAuthFactory;
     private readonly TextBox _meetingOutputFolder = new();
     private readonly CheckBox _meetingIncludeRawLog = new() { Content = "生ログをMDに同梱" };
-    private readonly CheckBox _meetingHotkeyEnabled = new() { Content = "Ctrl+Alt+M を有効化（再起動後に反映）" };
+    private readonly CheckBox _meetingHotkeyEnabled = new() { Content = "Ctrl+Alt+M を有効化" };
 
     public SettingsWindow(
         AppSettingsService settings,
@@ -67,64 +69,73 @@ public sealed class SettingsWindow : Window
         _sampleMode = sampleMode;
         Title = "設定 - WorkLog AI";
         Width = 560;
-        Height = 1130;
+        Height = 560;
         ResizeMode = ResizeMode.NoResize;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
 
-        var grid = new Grid { Margin = new Thickness(16) };
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition());
-        for (var i = 0; i < 26; i++)
-        {
-            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        }
-
-        AddRow(grid, 0, "会社名", _company);
-        AddRow(grid, 1, "氏名", _employee);
-        AddRow(grid, 2, "週報タイトル", _reportTitle);
+        // 「基本」: 会社名, 氏名, 週報タイトル, 週の開始曜日, Excel保存先, ホットキー(表示のみ),
+        // 自動起動, メモ0件リマインド, リマインド時刻
+        var basicGrid = NewTabGrid(9);
+        var basicRow = 0;
+        AddRow(basicGrid, basicRow++, "会社名", _company);
+        AddRow(basicGrid, basicRow++, "氏名", _employee);
+        AddRow(basicGrid, basicRow++, "週報タイトル", _reportTitle);
         _weekStart.ItemsSource = Enum.GetValues<DayOfWeek>();
-        AddRow(grid, 3, "週の開始曜日", _weekStart);
-        AddRow(grid, 4, "Excel保存先", _outputDirectory);
-        AddRow(grid, 5, "ホットキー", new TextBlock
+        AddRow(basicGrid, basicRow++, "週の開始曜日", _weekStart);
+        AddRow(basicGrid, basicRow++, "Excel保存先", _outputDirectory);
+        AddRow(basicGrid, basicRow++, "ホットキー", new TextBlock
         {
             Text = "Ctrl + Alt + W",
             Margin = new Thickness(4, 8, 4, 8)
         });
-        AddRow(grid, 6, "ローカルGit\n(1行1パス)", _repositories);
-        AddRow(grid, 7, "Codexセッション", _codexFolder);
-        AddRow(grid, 8, "更新ファイル対象\n(1行1パス)", _recentFolders);
-        AddRow(grid, 9, "収集範囲", new TextBlock
+        _autoStart.IsEnabled = !_sampleMode;
+        AddRow(basicGrid, basicRow++, "自動起動", _autoStart);
+        AddRow(basicGrid, basicRow++, "メモ0件リマインド", _reminderEnabled);
+        AddRow(basicGrid, basicRow++, "リマインド時刻(HH:mm)", _reminderTime);
+
+        // 「収集」: ローカルGit, Codexセッション, 更新ファイル対象, 収集範囲の説明文
+        var collectionGrid = NewTabGrid(4);
+        var collectionRow = 0;
+        AddRow(collectionGrid, collectionRow++, "ローカルGit\n(1行1パス)", _repositories);
+        AddRow(collectionGrid, collectionRow++, "Codexセッション", _codexFolder);
+        AddRow(collectionGrid, collectionRow++, "更新ファイル対象\n(1行1パス)", _recentFolders);
+        AddRow(collectionGrid, collectionRow++, "収集範囲", new TextBlock
         {
             Text = "設定したローカルフォルダーのみ。ファイル本文・diff・コマンド引数は収集しません。",
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(4, 8, 4, 8)
         });
-        AddRow(grid, 10, "OpenAIモデル", _model);
-        AddRow(grid, 11, "送信前確認", _preview);
-        AddRow(grid, 12, "OpenAI APIキー", _apiKey);
+
+        // 「AI」: OpenAIモデル, 送信前確認, OpenAI APIキー, キー状態(+テストボタン群), 秘密情報の説明文
+        var aiGrid = NewTabGrid(5);
+        var aiRow = 0;
+        AddRow(aiGrid, aiRow++, "OpenAIモデル", _model);
+        AddRow(aiGrid, aiRow++, "送信前確認", _preview);
+        AddRow(aiGrid, aiRow++, "OpenAI APIキー", _apiKey);
         _testApiKey.Click += TestApiKeyAsync;
-        AddRow(grid, 13, "キー状態", new StackPanel
+        AddRow(aiGrid, aiRow++, "キー状態", new StackPanel
         {
             Children = { _credentialStatus, _removeApiKey, _testApiKey, _testApiKeyResult }
         });
-        AddRow(grid, 14, "秘密情報", new TextBlock
+        AddRow(aiGrid, aiRow++, "秘密情報", new TextBlock
         {
             Text = "APIキーはWindows Credential Managerだけに保存します。既存キーは表示しません。",
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(4, 8, 4, 8)
         });
-        AddRow(grid, 15, "メモ0件リマインド", _reminderEnabled);
-        AddRow(grid, 16, "リマインド時刻(HH:mm)", _reminderTime);
-        _autoStart.IsEnabled = !_sampleMode;
-        AddRow(grid, 17, "自動起動", _autoStart);
-        AddRow(grid, 18, "クライアントID", _graphClientId);
-        AddRow(grid, 19, "テナントID", _graphTenantId);
-        AddRow(grid, 20, "Outlookメール", _graphMailEnabled);
-        AddRow(grid, 21, "Outlookカレンダー", _graphCalendarEnabled);
+
+        // 「Microsoft 365」: クライアントID, テナントID, Outlookメール, Outlookカレンダー,
+        // Microsoftサインイン(状態+ボタン)
+        var graphGrid = NewTabGrid(5);
+        var graphRow = 0;
+        AddRow(graphGrid, graphRow++, "クライアントID", _graphClientId);
+        AddRow(graphGrid, graphRow++, "テナントID", _graphTenantId);
+        AddRow(graphGrid, graphRow++, "Outlookメール", _graphMailEnabled);
+        AddRow(graphGrid, graphRow++, "Outlookカレンダー", _graphCalendarEnabled);
         _graphSignIn.Click += GraphSignInAsync;
         _graphSignOut.Click += GraphSignOutAsync;
         _graphClientId.TextChanged += (_, _) => UpdateGraphSignInEnabled();
-        AddRow(grid, 22, "Microsoftサインイン", new StackPanel
+        AddRow(graphGrid, graphRow++, "Microsoftサインイン", new StackPanel
         {
             Children =
             {
@@ -136,15 +147,26 @@ public sealed class SettingsWindow : Window
                 }
             }
         });
-        AddRow(grid, 23, "議事録出力フォルダ", _meetingOutputFolder);
-        AddRow(grid, 24, "議事録Markdown", _meetingIncludeRawLog);
-        AddRow(grid, 25, "議事録ホットキー", _meetingHotkeyEnabled);
+
+        // 「議事録」: 議事録出力フォルダ, 生ログをMDに同梱, 議事録ホットキー(Ctrl+Alt+M)
+        var meetingGrid = NewTabGrid(3);
+        var meetingRow = 0;
+        AddRow(meetingGrid, meetingRow++, "議事録出力フォルダ", _meetingOutputFolder);
+        AddRow(meetingGrid, meetingRow++, "議事録Markdown", _meetingIncludeRawLog);
+        AddRow(meetingGrid, meetingRow++, "議事録ホットキー", _meetingHotkeyEnabled);
+
+        var tabControl = new TabControl();
+        tabControl.Items.Add(new TabItem { Header = "基本", Content = TabScrollHost(basicGrid) });
+        tabControl.Items.Add(new TabItem { Header = "収集", Content = TabScrollHost(collectionGrid) });
+        tabControl.Items.Add(new TabItem { Header = "AI", Content = TabScrollHost(aiGrid) });
+        tabControl.Items.Add(new TabItem { Header = "Microsoft 365", Content = TabScrollHost(graphGrid) });
+        tabControl.Items.Add(new TabItem { Header = "議事録", Content = TabScrollHost(meetingGrid) });
 
         var buttons = new StackPanel
         {
             Orientation = Orientation.Horizontal,
             HorizontalAlignment = HorizontalAlignment.Right,
-            Margin = new Thickness(0, 12, 0, 0)
+            Margin = new Thickness(16, 12, 16, 16)
         };
         var save = new Button { Content = "保存", IsDefault = true, Padding = new Thickness(18, 6, 18, 6) };
         save.Style = (Style)System.Windows.Application.Current.FindResource("AccentButton");
@@ -158,18 +180,33 @@ public sealed class SettingsWindow : Window
         };
         buttons.Children.Add(save);
         buttons.Children.Add(cancel);
-        Grid.SetRow(buttons, 26);
-        Grid.SetColumnSpan(buttons, 2);
 
-        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        grid.Children.Add(buttons);
-        Content = new ScrollViewer
-        {
-            Content = grid,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto
-        };
+        var root = new DockPanel();
+        DockPanel.SetDock(buttons, Dock.Bottom);
+        root.Children.Add(buttons);
+        root.Children.Add(tabControl);
+        Content = root;
         Loaded += LoadAsync;
     }
+
+    private static Grid NewTabGrid(int rowCount)
+    {
+        var grid = new Grid { Margin = new Thickness(16) };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition());
+        for (var i = 0; i < rowCount; i++)
+        {
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        }
+
+        return grid;
+    }
+
+    private static ScrollViewer TabScrollHost(Grid grid) => new()
+    {
+        Content = grid,
+        VerticalScrollBarVisibility = ScrollBarVisibility.Auto
+    };
 
     private static void AddRow(Grid grid, int row, string label, FrameworkElement value)
     {
@@ -423,6 +460,11 @@ public sealed class SettingsWindow : Window
                     MessageBoxImage.Error);
                 return;
             }
+        }
+
+        if (System.Windows.Application.Current is App app)
+        {
+            app.ApplyMeetingHotKeySetting(_meetingHotkeyEnabled.IsChecked == true);
         }
 
         DialogResult = true;
