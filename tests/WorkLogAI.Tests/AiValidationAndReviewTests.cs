@@ -146,8 +146,9 @@ public sealed class AiValidationAndReviewTests
         using var workbook = new XLWorkbook(path);
         var sheet = workbook.Worksheet("業務週報");
         Assert.Equal("① earlier", sheet.Cell("B4").GetString());
-        Assert.Equal("① later", sheet.Cell("B5").GetString());
-        Assert.True(sheet.Cell("B6").IsEmpty());
+        Assert.True(sheet.Cell("B5").IsEmpty()); // blank spacer row: 7/29 -> 7/31 is a date change
+        Assert.Equal("① later", sheet.Cell("B6").GetString());
+        Assert.True(sheet.Cell("B7").IsEmpty());
     }
 
     private static AiCandidatePayload Payload(string date, string status, Guid evidence) =>

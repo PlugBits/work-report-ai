@@ -109,10 +109,10 @@ corners) applied consistently across all windows.
   rows); the user classifies it during review, there is no auto-classification. A
   day with both 社内 and 社外 rows selected splits into two rows in the exported
   Excel sheet, each independently numbered ①②③….
-- Exported Excel sheets and the app UI use **Noto Sans JP** as the base font,
-  falling back to Yu Gothic UI/Segoe UI when it is not installed; the Excel file
-  renders with the intended font only on a machine where Noto Sans JP is
-  installed — otherwise the viewer's own fallback font is used.
+- Exported Excel sheets use **BIZ UDPゴシック** as the base font; it ships with
+  Windows 10 version 1809+ and Windows 11, so no separate install is needed on
+  a supported machine. The app UI uses a separate font stack — **Noto Sans JP**,
+  falling back to Yu Gothic UI/Segoe UI when it is not installed.
 - The weekly review window shows a **今週のクイック入力** sidebar listing the review
   week's quick notes for reference, and the **記入状況** coverage bar's day chips now
   double as a filter — clicking a day (or 全て) narrows the cards and notes shown to

@@ -38,11 +38,16 @@ public sealed class ExcelExportTests
 
         Assert.Equal("社内\n2026/07/28\n山田", sheet.Cell("A4").GetString());
         Assert.Equal("① 最初", sheet.Cell("C4").GetString());
-        Assert.Equal("社内\n2026/07/30\n山田", sheet.Cell("A5").GetString());
-        Assert.Equal("① 二番目", sheet.Cell("C5").GetString());
+
+        // Different-date spacer row: completely empty and borderless.
+        Assert.Equal(string.Empty, sheet.Cell("A5").GetString());
+        Assert.Equal(XLBorderStyleValues.None, sheet.Cell("A5").Style.Border.LeftBorder);
+
+        Assert.Equal("社内\n2026/07/30\n山田", sheet.Cell("A6").GetString());
+        Assert.Equal("① 二番目", sheet.Cell("C6").GetString());
 
         Assert.All(
-            sheet.Range("A3:D5").Cells(),
+            sheet.Range("A3:D6").Cells(),
             cell => Assert.True(cell.Style.Alignment.WrapText));
         Assert.Equal(XLPageOrientation.Landscape, sheet.PageSetup.PageOrientation);
         Assert.Equal(1, sheet.PageSetup.PagesWide);
@@ -100,18 +105,20 @@ public sealed class ExcelExportTests
         using var workbook = new XLWorkbook(path);
         var sheet = workbook.Worksheet("業務週報");
 
-        // Two calendar days -> two data rows, not three.
+        // Two calendar days -> two data rows, not three, separated by one blank spacer row.
         Assert.Equal("社内\n2026/07/28\n山田", sheet.Cell("A4").GetString());
         Assert.Equal("① 案件A\n② 案件B", sheet.Cell("B4").GetString());
         Assert.Equal("① 最初の活動\n② 二番目の活動", sheet.Cell("C4").GetString());
         Assert.Equal("② 完了", sheet.Cell("D4").GetString());
 
-        Assert.Equal("社内\n2026/07/30\n山田", sheet.Cell("A5").GetString());
-        Assert.Equal("① 案件C", sheet.Cell("B5").GetString());
-        Assert.Equal("① 三番目の活動", sheet.Cell("C5").GetString());
-        Assert.Equal(string.Empty, sheet.Cell("D5").GetString());
+        Assert.Equal(string.Empty, sheet.Cell("A5").GetString());
 
-        Assert.Equal(string.Empty, sheet.Cell("A6").GetString());
+        Assert.Equal("社内\n2026/07/30\n山田", sheet.Cell("A6").GetString());
+        Assert.Equal("① 案件C", sheet.Cell("B6").GetString());
+        Assert.Equal("① 三番目の活動", sheet.Cell("C6").GetString());
+        Assert.Equal(string.Empty, sheet.Cell("D6").GetString());
+
+        Assert.Equal(string.Empty, sheet.Cell("A7").GetString());
     }
 
     [Fact]
@@ -222,7 +229,47 @@ public sealed class ExcelExportTests
     }
 
     [Fact]
-    public async Task Export_sets_noto_sans_jp_font_on_title_and_data_cells()
+    public async Task Export_inserts_one_blank_spacer_row_between_dates_but_none_within_a_mixed_day()
+    {
+        using var temporary = new TemporaryDirectory();
+        var exporter = new ClosedXmlWeeklyReportExporter();
+        var range = new WeekRange(new DateOnly(2026, 7, 27), new DateOnly(2026, 8, 2));
+        var rows = new[]
+        {
+            new ReportRow(new DateOnly(2026, 7, 28), "社内案件", "社内活動", ""),
+            new ReportRow(new DateOnly(2026, 7, 28), "社外案件", "社外活動", "", ReportCategories.External),
+            new ReportRow(new DateOnly(2026, 7, 30), "手動メモ", "三番目", "")
+        };
+
+        var path = await exporter.ExportAsync(
+            range,
+            rows,
+            temporary.Path,
+            new ReportIdentity("サンプル株式会社", "山田 太郎"));
+
+        using var workbook = new XLWorkbook(path);
+        var sheet = workbook.Worksheet("業務週報");
+
+        // Same-date 社内/社外 pair (rows 4-5) stays adjacent: no spacer between them.
+        Assert.Equal("社内\n2026/07/28\n山田", sheet.Cell("A4").GetString());
+        Assert.Equal("社外\n2026/07/28\n山田", sheet.Cell("A5").GetString());
+        Assert.NotEqual(XLBorderStyleValues.None, sheet.Cell("A5").Style.Border.LeftBorder);
+
+        // Exactly one blank, borderless spacer row (row 6) before the next date,
+        // shrunk to a slim 6pt visual gap.
+        Assert.Equal(string.Empty, sheet.Cell("A6").GetString());
+        Assert.Equal(XLBorderStyleValues.None, sheet.Cell("A6").Style.Border.LeftBorder);
+        Assert.Equal(XLBorderStyleValues.None, sheet.Cell("D6").Style.Border.RightBorder);
+        Assert.Equal(6, sheet.Row(6).Height);
+
+        Assert.Equal("社内\n2026/07/30\n山田", sheet.Cell("A7").GetString());
+        Assert.Equal("① 手動メモ", sheet.Cell("B7").GetString());
+        Assert.Equal("① 三番目", sheet.Cell("C7").GetString());
+        Assert.Equal(string.Empty, sheet.Cell("A8").GetString());
+    }
+
+    [Fact]
+    public async Task Export_sets_biz_udpgothic_font_on_title_and_data_cells()
     {
         using var temporary = new TemporaryDirectory();
         var exporter = new ClosedXmlWeeklyReportExporter();
@@ -241,9 +288,9 @@ public sealed class ExcelExportTests
         using var workbook = new XLWorkbook(path);
         var sheet = workbook.Worksheet("業務週報");
 
-        Assert.Equal("Noto Sans JP", sheet.Cell("A1").Style.Font.FontName);
-        Assert.Equal("Noto Sans JP", sheet.Cell("A4").Style.Font.FontName);
-        Assert.Equal("Noto Sans JP", sheet.Cell("C4").Style.Font.FontName);
+        Assert.Equal("BIZ UDPゴシック", sheet.Cell("A1").Style.Font.FontName);
+        Assert.Equal("BIZ UDPゴシック", sheet.Cell("A4").Style.Font.FontName);
+        Assert.Equal("BIZ UDPゴシック", sheet.Cell("C4").Style.Font.FontName);
     }
 
     [Fact]
@@ -359,9 +406,12 @@ public sealed class ExcelExportTests
 
         Assert.Equal("社内\n2026/07/02\n山田", sheet.Cell("A4").GetString());
         Assert.Equal("① 月初の活動", sheet.Cell("C4").GetString());
-        Assert.Equal("社内\n2026/07/30\n山田", sheet.Cell("A5").GetString());
-        Assert.Equal("① 月末の活動その1\n② 月末の活動その2", sheet.Cell("C5").GetString());
-        Assert.Equal("① 完了", sheet.Cell("D5").GetString());
+
+        Assert.Equal(string.Empty, sheet.Cell("A5").GetString());
+
+        Assert.Equal("社内\n2026/07/30\n山田", sheet.Cell("A6").GetString());
+        Assert.Equal("① 月末の活動その1\n② 月末の活動その2", sheet.Cell("C6").GetString());
+        Assert.Equal("① 完了", sheet.Cell("D6").GetString());
     }
 
     [Fact]
