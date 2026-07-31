@@ -105,6 +105,15 @@
       `ISourceEventRepository.DeleteByIdsAsync` so they cannot resurface, while
       collected/AI-origin rows only leave this week's review and the confirmation
       dialog says they may reappear on the next collection/generation run
+- [x] Weekly review **今週のクイック入力** sidebar lists the review week's
+      non-deleted quick notes for reference
+- [x] **記入状況** day chips (covered and empty) are clickable filters, with a
+      prepended **全て** chip to clear the filter; the notes sidebar and card list
+      both narrow to the selected day
+- [x] Git candidates show the commit subject/summary/statistics in **活動内容**
+      instead of the changed-file list (`GitEventText.StripFileList`), applied both
+      to the local mapper and the outbound AI prompt; file paths remain visible only
+      in the 根拠 line
 
 ## Phase 4 — Microsoft Graph mail and calendar
 

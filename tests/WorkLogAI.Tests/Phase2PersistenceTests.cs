@@ -106,6 +106,28 @@ public sealed class Phase2PersistenceTests
         Assert.Contains("implemented local parser", candidate.Activity);
     }
 
+    [Fact]
+    public void Local_mapping_strips_the_git_file_list_from_activity_but_keeps_subject_and_statistics()
+    {
+        var source = SourceEventFactory.Create(
+            new DateTimeOffset(2026, 7, 30, 11, 0, 0, TimeSpan.FromHours(-4)),
+            SourceTypes.Git,
+            "feat: 検査結果の入力を追加",
+            "検査結果入力画面を実装。変更ファイル: src/Inspection.cs, src/Inspection.Tests.cs。統計: +40 / -5",
+            "repository=C:\\work\\repo; commit=abc123; files=src/Inspection.cs,src/Inspection.Tests.cs",
+            "git:repo:abc123",
+            .9);
+
+        var candidate = new LocalSourceEventMapper().Map(source, new DateOnly(2026, 7, 27));
+
+        Assert.Equal("ローカルGit", candidate.WorkItem);
+        Assert.Contains("feat: 検査結果の入力を追加", candidate.Activity);
+        Assert.Contains("検査結果入力画面を実装", candidate.Activity);
+        Assert.Contains("統計: +40 / -5", candidate.Activity);
+        Assert.DoesNotContain("変更ファイル", candidate.Activity);
+        Assert.DoesNotContain("Inspection.cs", candidate.Activity);
+    }
+
     [Theory]
     [InlineData(SourceTypes.OutlookMail, "メール対応")]
     [InlineData(SourceTypes.Calendar, "会議・予定")]

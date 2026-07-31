@@ -33,13 +33,16 @@ public sealed partial class AiPromptBuilder(
                 truncated = true;
                 break;
             }
+            var body = sourceEvent.SourceType == SourceTypes.Git
+                ? GitEventText.StripFileList(sourceEvent.Body)
+                : sourceEvent.Body;
             var item = new
             {
                 eventId = sourceEvent.Id,
                 occurredDate = sourceEvent.OccurredAt.ToString("yyyy-MM-dd"),
                 sourceType = sourceEvent.SourceType,
                 title = ReduceLocalPaths(Outbound(sourceEvent.Title, 500)),
-                body = ReduceLocalPaths(Outbound(sourceEvent.Body, 2_000)),
+                body = ReduceLocalPaths(Outbound(body, 2_000)),
                 evidence = ReduceLocalPaths(Outbound(sourceEvent.Evidence, 1_000))
             };
             var tentative = JsonSerializer.Serialize(new

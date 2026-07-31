@@ -109,9 +109,12 @@ public sealed class LocalSourceEventMapper
             _ => "ローカル記録"
         };
 
-        var activity = sourceEvent.SourceType is SourceTypes.Manual or SourceTypes.Meeting
-            ? sourceEvent.Body
-            : JoinNonBlank(sourceEvent.Title, sourceEvent.Body);
+        var activity = sourceEvent.SourceType switch
+        {
+            SourceTypes.Manual or SourceTypes.Meeting => sourceEvent.Body,
+            SourceTypes.Git => JoinNonBlank(sourceEvent.Title, GitEventText.StripFileList(sourceEvent.Body)),
+            _ => JoinNonBlank(sourceEvent.Title, sourceEvent.Body)
+        };
 
         // A formatted meeting record reflects a meeting that already happened and
         // was explicitly reviewed by the user (see MeetingSummaryCollector) — unlike

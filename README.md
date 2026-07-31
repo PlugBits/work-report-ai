@@ -101,6 +101,14 @@ This repository currently implements Phases 1 through 4, plus a 議事録モー�
 - The weekly review's **Excel出力** checks coverage of selected rows only and, if
   any Monday–Friday day has zero selected candidates, shows a Yes/No confirmation
   listing the blank weekdays before exporting. Weekends never trigger it.
+- The weekly review window shows a **今週のクイック入力** sidebar listing the review
+  week's quick notes for reference, and the **記入状況** coverage bar's day chips now
+  double as a filter — clicking a day (or 全て) narrows the cards and notes shown to
+  that day, in addition to the existing low-confidence filter.
+- Git-sourced candidates show the commit subject, body summary, and add/delete
+  statistics in **活動内容** instead of the raw changed-file list, which stays
+  visible only in the card's 根拠 line; the same file-list-free text is sent to the
+  AI generation prompt.
 - Both **Excel出力** actions (weekly review and history) ask **ファイルを開きますか？**
   after a successful export and open the file with the OS default handler on Yes.
 - A best-effort local error log (`ErrorLog`) appends `context`/exception
