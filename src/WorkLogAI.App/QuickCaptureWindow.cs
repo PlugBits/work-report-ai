@@ -20,6 +20,7 @@ public sealed class QuickCaptureWindow : Window
 
     public QuickCaptureWindow(IQuickNoteRepository notes)
     {
+        AppTheme.Apply(this);
         _notes = notes;
         Title = "WorkLog AI";
         Width = 620;
@@ -140,11 +141,12 @@ internal sealed class SaveToast : Window
         Content = new Border
         {
             Background = new SolidColorBrush(Color.FromArgb(230, 40, 40, 40)),
-            CornerRadius = new CornerRadius(6),
+            CornerRadius = new CornerRadius(8),
             Child = new TextBlock
             {
                 Text = "保存しました",
                 Foreground = Brushes.White,
+                FontSize = 13,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center
             }

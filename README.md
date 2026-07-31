@@ -5,6 +5,9 @@ notes, collecting safe local work metadata, and exporting a manual weekly report
 This repository currently implements Phases 1 through 4, plus a 議事録モード
 (meeting minutes mode) addition (see below).
 
+The UI uses a refreshed, modern light theme (white cards, blue accents, rounded
+corners) applied consistently across all windows.
+
 ## Phase 1 features
 
 - `Ctrl + Alt + W` opens a keyboard-only, single-line quick capture window. The

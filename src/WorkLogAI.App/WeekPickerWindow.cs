@@ -15,6 +15,7 @@ public sealed class WeekPickerWindow : Window
 
     public WeekPickerWindow(DateOnly today, DayOfWeek weekStartsOn)
     {
+        AppTheme.Apply(this);
         _options = WeekOptionBuilder.Build(today, weekStartsOn, 8);
         Title = "候補を生成 - WorkLog AI";
         Width = 380;
@@ -41,6 +42,7 @@ public sealed class WeekPickerWindow : Window
             HorizontalAlignment = HorizontalAlignment.Right
         };
         var ok = new Button { Content = "OK", IsDefault = true, Padding = new Thickness(18, 6, 18, 6) };
+        ok.Style = (Style)System.Windows.Application.Current.FindResource("AccentButton");
         ok.Click += (_, _) => Accept();
         var cancel = new Button
         {

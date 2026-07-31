@@ -32,6 +32,7 @@ public sealed class CandidateWindow : Window
 
     public CandidateWindow(AppServices services, WeekRange range, string? statusBanner = null)
     {
+        AppTheme.Apply(this);
         _services = services;
         _range = range;
         Title = $"週次レビュー {range.Start:yyyy/MM/dd}〜{range.End:yyyy/MM/dd}";
@@ -57,7 +58,9 @@ public sealed class CandidateWindow : Window
         actions.Children.Add(ActionButton("重複候補を統合", MergeCandidates));
         actions.Children.Add(ActionButton("1行追加", AddManualRowAsync));
         actions.Children.Add(ActionButton("編集を保存", SaveAsync));
-        actions.Children.Add(ActionButton("Excel出力", ExportAsync));
+        var exportButton = ActionButton("Excel出力", ExportAsync);
+        exportButton.Style = (Style)System.Windows.Application.Current.FindResource("AccentButton");
+        actions.Children.Add(exportButton);
         DockPanel.SetDock(actions, Dock.Top);
         root.Children.Add(actions);
 
@@ -65,10 +68,10 @@ public sealed class CandidateWindow : Window
         {
             var banner = new Border
             {
-                Background = new SolidColorBrush(Color.FromRgb(0xE3, 0xF2, 0xFD)),
-                BorderBrush = new SolidColorBrush(Color.FromRgb(0x90, 0xCA, 0xF9)),
+                Background = new SolidColorBrush(Color.FromRgb(0xEF, 0xF6, 0xFF)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(0xBF, 0xDB, 0xFE)),
                 BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(4),
+                CornerRadius = new CornerRadius(6),
                 Padding = new Thickness(10, 8, 10, 8),
                 Margin = new Thickness(0, 0, 0, 10),
                 Child = new TextBlock
@@ -315,7 +318,8 @@ public sealed class CandidateWindow : Window
         var deleteButton = new Button
         {
             Content = "削除",
-            Padding = new Thickness(9, 3, 9, 3)
+            Padding = new Thickness(9, 3, 9, 3),
+            Foreground = new SolidColorBrush(Color.FromRgb(0xDC, 0x26, 0x26))
         };
         deleteButton.Click += (_, _) => _ = DeleteCardAsync(item);
         DockPanel.SetDock(deleteButton, Dock.Right);
@@ -365,11 +369,12 @@ public sealed class CandidateWindow : Window
 
         return new Border
         {
-            BorderBrush = Brushes.LightGray,
+            Background = Brushes.White,
+            BorderBrush = new SolidColorBrush(Color.FromRgb(0xE5, 0xE7, 0xEB)),
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(6),
+            CornerRadius = new CornerRadius(8),
             Padding = new Thickness(12),
-            Margin = new Thickness(0, 0, 0, 12),
+            Margin = new Thickness(0, 0, 0, 10),
             Child = panel
         };
     }

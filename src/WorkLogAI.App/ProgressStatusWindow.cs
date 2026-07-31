@@ -16,6 +16,7 @@ public sealed class ProgressStatusWindow : Window
 
     public ProgressStatusWindow()
     {
+        AppTheme.Apply(this);
         Title = "WorkLog AI";
         Width = 300;
         Height = 100;

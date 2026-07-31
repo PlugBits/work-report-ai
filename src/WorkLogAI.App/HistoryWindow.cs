@@ -17,6 +17,7 @@ public sealed class HistoryWindow : Window
 
     public HistoryWindow(AppServices services)
     {
+        AppTheme.Apply(this);
         _services = services;
         Title = "今週の記録 - WorkLog AI";
         Width = 900;
@@ -48,7 +49,9 @@ public sealed class HistoryWindow : Window
         controls.Children.Add(Button("削除", DeleteSelectedAsync));
         controls.Children.Add(Button("再開", ReopenSelectedAsync));
         controls.Children.Add(Button("この週の候補レビュー", ShowCandidates));
-        controls.Children.Add(Button("Excel出力", ExportAsync));
+        var exportButton = Button("Excel出力", ExportAsync);
+        exportButton.Style = (Style)System.Windows.Application.Current.FindResource("AccentButton");
+        controls.Children.Add(exportButton);
         DockPanel.SetDock(controls, Dock.Top);
         root.Children.Add(controls);
 

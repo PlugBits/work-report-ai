@@ -20,6 +20,7 @@ public sealed class MeetingLineEditWindow : Window
 
     public MeetingLineEditWindow(string rawText)
     {
+        AppTheme.Apply(this);
         Title = "行を編集 - WorkLog AI";
         Width = 380;
         SizeToContent = SizeToContent.Height;

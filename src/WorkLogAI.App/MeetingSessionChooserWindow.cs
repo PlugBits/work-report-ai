@@ -16,6 +16,7 @@ public sealed class MeetingSessionChooserWindow : Window
 
     public MeetingSessionChooserWindow(IReadOnlyList<MeetingSession> drafts)
     {
+        AppTheme.Apply(this);
         Title = "議事録を開始 - WorkLog AI";
         Width = 420;
         SizeToContent = SizeToContent.Height;

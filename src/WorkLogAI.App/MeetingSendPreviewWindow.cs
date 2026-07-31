@@ -29,6 +29,7 @@ public sealed class MeetingSendPreviewWindow : Window
 
     public MeetingSendPreviewWindow(MeetingSession session, IReadOnlyList<MeetingLine> lines, string model)
     {
+        AppTheme.Apply(this);
         _session = session;
         _model = model;
 
@@ -62,6 +63,7 @@ public sealed class MeetingSendPreviewWindow : Window
             Margin = new Thickness(0, 8, 0, 0)
         };
         var ok = new Button { Content = "送信", IsDefault = true, Padding = new Thickness(14, 6, 14, 6) };
+        ok.Style = (Style)System.Windows.Application.Current.FindResource("AccentButton");
         ok.Click += (_, _) => DialogResult = true;
         var cancel = new Button
         {
