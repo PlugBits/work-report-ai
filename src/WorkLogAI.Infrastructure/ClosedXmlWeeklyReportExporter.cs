@@ -117,6 +117,7 @@ public sealed class ClosedXmlWeeklyReportExporter : IWeeklyReportExporter
 
         var rowNumber = 4;
         DateOnly? previousDate = null;
+        var spacerRowNumbers = new List<int>();
 
         foreach (var day in dailyRows)
         {
@@ -130,6 +131,7 @@ public sealed class ClosedXmlWeeklyReportExporter : IWeeklyReportExporter
                 // them. The spacer is an ordinary empty row within the
                 // continuous bordered grid, with no forced height, so it
                 // behaves like any other row under Excel's auto-fit.
+                spacerRowNumbers.Add(rowNumber);
                 rowNumber++;
             }
 
@@ -166,6 +168,21 @@ public sealed class ClosedXmlWeeklyReportExporter : IWeeklyReportExporter
         reportRange.Style.Alignment.Vertical = XLAlignmentVerticalValues.Top;
         reportRange.Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
         reportRange.Style.Border.InsideBorder = XLBorderStyleValues.Thin;
+
+        foreach (var spacerRowNumber in spacerRowNumbers)
+        {
+            // Merge each spacer row with the previous date's block: drop the
+            // horizontal line between the last content row of that date and
+            // the spacer that follows it. Both adjacent edges must be
+            // cleared — Excel renders a line if either side still has one.
+            // The spacer's own bottom edge (the boundary before the next
+            // date) and its left/right borders are left untouched.
+            sheet.Range(spacerRowNumber - 1, 1, spacerRowNumber - 1, 4).Style.Border.BottomBorder =
+                XLBorderStyleValues.None;
+            sheet.Range(spacerRowNumber, 1, spacerRowNumber, 4).Style.Border.TopBorder =
+                XLBorderStyleValues.None;
+        }
+
         sheet.Column(1).Width = 20.14; // 146 px
         sheet.Column(2).Width = 39.71; // 283 px
         sheet.Column(3).Width = 69.29; // 490 px
