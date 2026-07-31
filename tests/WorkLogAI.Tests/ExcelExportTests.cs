@@ -7,7 +7,7 @@ namespace WorkLogAI.Tests;
 public sealed class ExcelExportTests
 {
     [Fact]
-    public async Task Export_has_exact_japanese_layout_and_chronological_rows()
+    public async Task Export_has_exact_japanese_layout_and_chronological_day_rows()
     {
         using var temporary = new TemporaryDirectory();
         var exporter = new ClosedXmlWeeklyReportExporter();
@@ -30,14 +30,17 @@ public sealed class ExcelExportTests
         using var workbook = new XLWorkbook(path);
         var sheet = workbook.Worksheet("業務週報");
         Assert.Equal("業務週報 2026/07/27〜2026/08/02", sheet.Cell("A1").GetString());
-        Assert.Equal("サンプル株式会社 / 山田 太郎", sheet.Cell("D1").GetString());
+        Assert.Equal("サンプル株式会社", sheet.Cell("D1").GetString());
+        Assert.Equal("山田 太郎", sheet.Cell("D2").GetString());
         Assert.Equal(
-            new[] { "日時", "業務項目", "活動内容", "結果・決定事項／今後の課題" },
+            new[] { "日時", "項目/案件・目標金額", "活動内容", "結果・決定事項/今後の課題" },
             sheet.Range("A3:D3").Cells().Select(cell => cell.GetString()).ToArray());
-        Assert.Equal(new DateTime(2026, 7, 28), sheet.Cell("A4").GetDateTime());
-        Assert.Equal("最初", sheet.Cell("C4").GetString());
-        Assert.Equal(new DateTime(2026, 7, 30), sheet.Cell("A5").GetDateTime());
-        Assert.Equal("二番目", sheet.Cell("C5").GetString());
+
+        Assert.Equal("社内\n2026/07/28\n山田", sheet.Cell("A4").GetString());
+        Assert.Equal("① 最初", sheet.Cell("C4").GetString());
+        Assert.Equal("社内\n2026/07/30\n山田", sheet.Cell("A5").GetString());
+        Assert.Equal("① 二番目", sheet.Cell("C5").GetString());
+
         Assert.All(
             sheet.Range("A3:D5").Cells(),
             cell => Assert.True(cell.Style.Alignment.WrapText));
@@ -46,7 +49,119 @@ public sealed class ExcelExportTests
     }
 
     [Fact]
-    public async Task Export_merges_date_cells_for_consecutive_rows_sharing_a_date()
+    public async Task Export_uses_blue_fill_and_white_bold_text_on_header_row()
+    {
+        using var temporary = new TemporaryDirectory();
+        var exporter = new ClosedXmlWeeklyReportExporter();
+        var range = new WeekRange(new DateOnly(2026, 7, 27), new DateOnly(2026, 8, 2));
+        var rows = new[]
+        {
+            new ReportRow(new DateOnly(2026, 7, 28), "手動メモ", "最初", "")
+        };
+
+        var path = await exporter.ExportAsync(
+            range,
+            rows,
+            temporary.Path,
+            new ReportIdentity("サンプル株式会社", "山田 太郎"));
+
+        using var workbook = new XLWorkbook(path);
+        var sheet = workbook.Worksheet("業務週報");
+
+        Assert.All(
+            sheet.Range("A3:D3").Cells(),
+            cell =>
+            {
+                Assert.True(cell.Style.Font.Bold);
+                Assert.Equal(XLColor.White, cell.Style.Font.FontColor);
+                Assert.Equal(XLColor.FromHtml("#2E74B5"), cell.Style.Fill.BackgroundColor);
+            });
+    }
+
+    [Fact]
+    public async Task Export_groups_multiple_selected_items_on_the_same_day_into_one_numbered_row()
+    {
+        using var temporary = new TemporaryDirectory();
+        var exporter = new ClosedXmlWeeklyReportExporter();
+        var range = new WeekRange(new DateOnly(2026, 7, 27), new DateOnly(2026, 8, 2));
+        var rows = new[]
+        {
+            new ReportRow(new DateOnly(2026, 7, 28), "案件A", "最初の活動", ""),
+            new ReportRow(new DateOnly(2026, 7, 28), "案件B", "二番目の活動", "完了"),
+            new ReportRow(new DateOnly(2026, 7, 30), "案件C", "三番目の活動", "")
+        };
+
+        var path = await exporter.ExportAsync(
+            range,
+            rows,
+            temporary.Path,
+            new ReportIdentity("サンプル株式会社", "山田 太郎"));
+
+        using var workbook = new XLWorkbook(path);
+        var sheet = workbook.Worksheet("業務週報");
+
+        // Two calendar days -> two data rows, not three.
+        Assert.Equal("社内\n2026/07/28\n山田", sheet.Cell("A4").GetString());
+        Assert.Equal("① 案件A\n② 案件B", sheet.Cell("B4").GetString());
+        Assert.Equal("① 最初の活動\n② 二番目の活動", sheet.Cell("C4").GetString());
+        Assert.Equal("② 完了", sheet.Cell("D4").GetString());
+
+        Assert.Equal("社内\n2026/07/30\n山田", sheet.Cell("A5").GetString());
+        Assert.Equal("① 案件C", sheet.Cell("B5").GetString());
+        Assert.Equal("① 三番目の活動", sheet.Cell("C5").GetString());
+        Assert.Equal(string.Empty, sheet.Cell("D5").GetString());
+
+        Assert.Equal(string.Empty, sheet.Cell("A6").GetString());
+    }
+
+    [Fact]
+    public async Task Export_omits_surname_line_when_employee_name_is_blank()
+    {
+        using var temporary = new TemporaryDirectory();
+        var exporter = new ClosedXmlWeeklyReportExporter();
+        var range = new WeekRange(new DateOnly(2026, 7, 27), new DateOnly(2026, 8, 2));
+        var rows = new[]
+        {
+            new ReportRow(new DateOnly(2026, 7, 28), "手動メモ", "最初", "")
+        };
+
+        var path = await exporter.ExportAsync(
+            range,
+            rows,
+            temporary.Path,
+            new ReportIdentity("サンプル株式会社", "  "));
+
+        using var workbook = new XLWorkbook(path);
+        var sheet = workbook.Worksheet("業務週報");
+
+        Assert.Equal("社内\n2026/07/28", sheet.Cell("A4").GetString());
+    }
+
+    [Fact]
+    public async Task Export_uses_only_first_token_of_employee_name_as_surname()
+    {
+        using var temporary = new TemporaryDirectory();
+        var exporter = new ClosedXmlWeeklyReportExporter();
+        var range = new WeekRange(new DateOnly(2026, 7, 27), new DateOnly(2026, 8, 2));
+        var rows = new[]
+        {
+            new ReportRow(new DateOnly(2026, 7, 28), "手動メモ", "最初", "")
+        };
+
+        var path = await exporter.ExportAsync(
+            range,
+            rows,
+            temporary.Path,
+            new ReportIdentity("サンプル株式会社", "田中"));
+
+        using var workbook = new XLWorkbook(path);
+        var sheet = workbook.Worksheet("業務週報");
+
+        Assert.Equal("社内\n2026/07/28\n田中", sheet.Cell("A4").GetString());
+    }
+
+    [Fact]
+    public async Task Export_creates_no_merges_in_the_data_area()
     {
         using var temporary = new TemporaryDirectory();
         var exporter = new ClosedXmlWeeklyReportExporter();
@@ -67,54 +182,15 @@ public sealed class ExcelExportTests
         using var workbook = new XLWorkbook(path);
         var sheet = workbook.Worksheet("業務週報");
 
-        var dataMerge = Assert.Single(
-            sheet.MergedRanges.Where(mergedRange => mergedRange.RangeAddress.ToString() == "A4:A5"));
-        Assert.Equal(4, dataMerge.RangeAddress.FirstAddress.RowNumber);
-        Assert.Equal(5, dataMerge.RangeAddress.LastAddress.RowNumber);
-        Assert.Equal(new DateTime(2026, 7, 28), sheet.Cell("A4").GetDateTime());
-        Assert.True(sheet.Cell("A4").IsMerged());
-        Assert.True(sheet.Cell("A5").IsMerged());
-
-        Assert.False(sheet.Cell("A6").IsMerged());
-        Assert.Equal(new DateTime(2026, 7, 30), sheet.Cell("A6").GetDateTime());
-        Assert.Equal("三番目", sheet.Cell("C6").GetString());
-    }
-
-    [Fact]
-    public async Task Export_leaves_distinct_dates_unmerged()
-    {
-        using var temporary = new TemporaryDirectory();
-        var exporter = new ClosedXmlWeeklyReportExporter();
-        var range = new WeekRange(new DateOnly(2026, 7, 27), new DateOnly(2026, 8, 2));
-        var rows = new[]
-        {
-            new ReportRow(new DateOnly(2026, 7, 28), "手動メモ", "最初", ""),
-            new ReportRow(new DateOnly(2026, 7, 29), "手動メモ", "二番目", ""),
-            new ReportRow(new DateOnly(2026, 7, 30), "手動メモ", "三番目", "")
-        };
-
-        var path = await exporter.ExportAsync(
-            range,
-            rows,
-            temporary.Path,
-            new ReportIdentity("サンプル株式会社", "山田 太郎"));
-
-        using var workbook = new XLWorkbook(path);
-        var sheet = workbook.Worksheet("業務週報");
-
         var dataAreaMerges = sheet.MergedRanges
-            .Where(mergedRange => mergedRange.RangeAddress.FirstAddress.RowNumber >= 4)
+            .Where(mergedRange => mergedRange.RangeAddress.FirstAddress.RowNumber >= 3)
             .ToArray();
         Assert.Empty(dataAreaMerges);
 
-        // The title row merge (A1:C1) is unaffected by the data-row merging logic.
+        // The title row merge (A1:C1) is unaffected.
         Assert.Contains(
             sheet.MergedRanges,
             mergedRange => mergedRange.RangeAddress.ToString() == "A1:C1");
-
-        Assert.False(sheet.Cell("A4").IsMerged());
-        Assert.False(sheet.Cell("A5").IsMerged());
-        Assert.False(sheet.Cell("A6").IsMerged());
     }
 
     [Fact]

@@ -127,8 +127,8 @@ public sealed class AiValidationAndReviewTests
 
         using var workbook = new XLWorkbook(path);
         var sheet = workbook.Worksheet("業務週報");
-        Assert.Equal("earlier", sheet.Cell("B4").GetString());
-        Assert.Equal("later", sheet.Cell("B5").GetString());
+        Assert.Equal("① earlier", sheet.Cell("B4").GetString());
+        Assert.Equal("① later", sheet.Cell("B5").GetString());
         Assert.True(sheet.Cell("B6").IsEmpty());
     }
 

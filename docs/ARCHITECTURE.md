@@ -370,9 +370,23 @@ same `GenerateCandidatesAsync` path used previously for "this week only".
 
 ## Excel contract
 
-ClosedXML writes one worksheet named `業務週報`, a Japanese title and identity row,
-and exactly four report columns. Rows are chronological, wrapped, bordered, and
-configured for landscape printing at one page wide.
+ClosedXML writes one worksheet named `業務週報`, matching the layout of the
+user's real submitted weekly report. Row 1 holds the merged title (A1:C1); D1
+and D2 hold the company name and employee name as two stacked cells (replacing
+the earlier single "company / employee" title cell). Row 3 is the header row
+(日時/項目・案件・目標金額/活動内容/結果・決定事項・今後の課題) with a blue fill and
+white bold text (replacing the earlier light-gray header). `WorkLogAI.Core`'s
+pure `DailyReportGrouper` groups the already-filtered, chronologically sorted
+`ReportRow`s into one `DailyReportRow` per calendar day and numbers each day's
+items in arrival order (circled digits ①–⑳ via `DailyReportGrouper.CircledNumber`,
+falling back to `(21)`, `(22)`, … beyond that); the exporter renders exactly one
+sheet row per day from that grouping — never one row per `ReportRow` — with the
+日時 cell holding three stacked lines (the fixed literal 社内, the date, and the
+employee's surname), the 項目/活動内容 cells holding one numbered line per item,
+and the 結果・決定事項 cell holding only the numbered items whose result text is
+non-blank. Rows are wrapped, bordered, and configured for landscape printing at
+one page wide; the data area has no merged cells now that grouping happens by
+day rather than by consecutive same-date rows.
 
 ## Security and deferred integrations
 
