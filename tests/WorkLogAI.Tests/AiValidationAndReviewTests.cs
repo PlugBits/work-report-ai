@@ -145,14 +145,14 @@ public sealed class AiValidationAndReviewTests
 
         using var workbook = new XLWorkbook(path);
         var sheet = workbook.Worksheet("業務週報");
-        Assert.Equal("① earlier", sheet.Cell("C4").GetString());
-        // 7/29's day block occupies rows 4-7 (content + 3 blanks) before the
+        Assert.Equal("① earlier", sheet.Cell("C5").GetString());
+        // 7/29's day block occupies rows 5-8 (content + 3 blanks) before the
         // next date's content row starts.
-        Assert.True(sheet.Cell("C5").IsEmpty());
         Assert.True(sheet.Cell("C6").IsEmpty());
         Assert.True(sheet.Cell("C7").IsEmpty());
-        Assert.Equal("① later", sheet.Cell("C8").GetString());
-        Assert.True(sheet.Cell("C9").IsEmpty());
+        Assert.True(sheet.Cell("C8").IsEmpty());
+        Assert.Equal("① later", sheet.Cell("C9").GetString());
+        Assert.True(sheet.Cell("C10").IsEmpty());
     }
 
     private static AiCandidatePayload Payload(string date, string status, Guid evidence) =>
