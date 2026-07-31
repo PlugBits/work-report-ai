@@ -72,6 +72,26 @@ public interface IReportCandidateRepository
         DateOnly weekStart,
         IReadOnlyCollection<ReportCandidate> candidates,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Lists the id and activity text of every stored candidate (any week, any
+    /// origin/edited/selected state) whose activity contains <paramref name="needle"/>.
+    /// Used by the one-time startup cleanup that strips leftover git file-list text
+    /// from candidates stored before <see cref="GitEventText.StripFileList"/> covered
+    /// merged rows.
+    /// </summary>
+    Task<IReadOnlyList<(Guid Id, string Activity)>> ListActivitiesContainingAsync(
+        string needle,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Updates only the activity column for the candidate with the given id. All
+    /// other columns (including edited/selected/origin) are left untouched.
+    /// </summary>
+    Task UpdateActivityAsync(
+        Guid id,
+        string activity,
+        CancellationToken cancellationToken = default);
 }
 
 public interface ISourceCollector
