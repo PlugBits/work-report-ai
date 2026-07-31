@@ -28,6 +28,15 @@ public sealed class SettingsWindow : Window
     private readonly PasswordBox _apiKey = new();
     private readonly CheckBox _removeApiKey = new() { Content = "保存済みAPIキーを削除" };
     private readonly TextBlock _credentialStatus = new();
+    private readonly Button _testApiKey = new()
+    {
+        Content = "APIキーをテスト",
+        Padding = new Thickness(10, 4, 10, 4),
+        Margin = new Thickness(0, 6, 0, 0),
+        HorizontalAlignment = HorizontalAlignment.Left
+    };
+    private readonly TextBlock _testApiKeyResult = new() { Margin = new Thickness(0, 4, 0, 0) };
+    private readonly OpenAiKeyProbe _keyProbe = new();
     private readonly CheckBox _reminderEnabled = new() { Content = "平日夕方にメモ0件をリマインド" };
     private readonly TextBox _reminderTime = new();
     private readonly CheckBox _autoStart = new() { Content = "Windowsログイン時に自動起動する" };
@@ -93,9 +102,10 @@ public sealed class SettingsWindow : Window
         AddRow(grid, 10, "OpenAIモデル", _model);
         AddRow(grid, 11, "送信前確認", _preview);
         AddRow(grid, 12, "OpenAI APIキー", _apiKey);
+        _testApiKey.Click += TestApiKeyAsync;
         AddRow(grid, 13, "キー状態", new StackPanel
         {
-            Children = { _credentialStatus, _removeApiKey }
+            Children = { _credentialStatus, _removeApiKey, _testApiKey, _testApiKeyResult }
         });
         AddRow(grid, 14, "秘密情報", new TextBlock
         {
@@ -291,6 +301,39 @@ public sealed class SettingsWindow : Window
             // Best-effort sign-out; fall through to reset the displayed status.
         }
         _graphStatus.Text = "未サインイン";
+    }
+
+    private async void TestApiKeyAsync(object sender, RoutedEventArgs e)
+    {
+        _testApiKey.IsEnabled = false;
+        _testApiKeyResult.Text = "確認中…";
+        try
+        {
+            var key = !string.IsNullOrWhiteSpace(_apiKey.Password)
+                ? _apiKey.Password
+                : await _credentials.GetAsync(CredentialTargets.OpenAiApiKey);
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                _testApiKeyResult.Text = "APIキーが未設定です。";
+                return;
+            }
+
+            var status = await _keyProbe.ProbeAsync(key);
+            _testApiKeyResult.Text = status switch
+            {
+                OpenAiKeyProbeStatus.Ok => "キーは有効です。",
+                OpenAiKeyProbeStatus.Unauthorized => "キーが無効です(401)。",
+                _ => "接続できませんでした。"
+            };
+        }
+        catch
+        {
+            _testApiKeyResult.Text = "接続できませんでした。";
+        }
+        finally
+        {
+            _testApiKey.IsEnabled = true;
+        }
     }
 
     private async void SaveAsync(object sender, RoutedEventArgs e)

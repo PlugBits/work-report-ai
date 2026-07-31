@@ -114,6 +114,48 @@ public sealed class OpenAiResponsesClientTests
     }
 
     [Fact]
+    public async Task Transient_429_is_retried_and_then_succeeds()
+    {
+        var source = Event("safe", "safe");
+        var handler = new SequenceHandler(
+            [HttpStatusCode.TooManyRequests, HttpStatusCode.OK],
+            EnvelopeResponse(CandidateJson(source.Id)));
+        var delays = new List<TimeSpan>();
+        var client = new OpenAiResponsesClient(
+            new HttpClient(handler),
+            new FakeCredentialStore(Secret),
+            new AiPromptBuilder(maximumEvents: 10, maximumUtf8Bytes: 32 * 1024),
+            new AiCandidateValidator(),
+            retryDelay: (delay, _) => { delays.Add(delay); return Task.CompletedTask; });
+
+        var result = await client.GenerateAsync(new AiGenerationRequest(
+            new WeekRange(new DateOnly(2026, 7, 27), new DateOnly(2026, 8, 2)), "gpt-5.6-sol", [source]));
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(2, handler.Attempts);
+        Assert.Single(delays);
+    }
+
+    [Fact]
+    public async Task Unauthorized_401_fails_immediately_without_retry()
+    {
+        var source = Event("safe", "safe");
+        var handler = new SequenceHandler([HttpStatusCode.Unauthorized], "");
+        var client = new OpenAiResponsesClient(
+            new HttpClient(handler),
+            new FakeCredentialStore(Secret),
+            new AiPromptBuilder(maximumEvents: 10, maximumUtf8Bytes: 32 * 1024),
+            new AiCandidateValidator(),
+            retryDelay: (_, _) => throw new InvalidOperationException("must not delay"));
+
+        var result = await client.GenerateAsync(new AiGenerationRequest(
+            new WeekRange(new DateOnly(2026, 7, 27), new DateOnly(2026, 8, 2)), "gpt-5.6-sol", [source]));
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(1, handler.Attempts);
+    }
+
+    [Fact]
     public async Task Fake_credential_store_behaves_without_persisting_secret_in_settings()
     {
         var credentials = new FakeCredentialStore();
@@ -172,6 +214,25 @@ public sealed class OpenAiResponsesClientTests
     }
 
     [Fact]
+    public void Prompt_includes_only_the_latest_event_per_stable_source_ref()
+    {
+        var occurredAt = new DateTimeOffset(2026, 7, 30, 10, 0, 0, TimeSpan.FromHours(-4));
+        var stale = SourceEventFactory.Create(
+            occurredAt, SourceTypes.Meeting, "meeting v1", "stale summary", "evidence",
+            "meeting:stable-ref", .9, occurredAt);
+        var fresh = SourceEventFactory.Create(
+            occurredAt, SourceTypes.Meeting, "meeting v2", "fresh summary", "evidence",
+            "meeting:stable-ref", .9, occurredAt.AddHours(2));
+
+        var prompt = new AiPromptBuilder(maximumEvents: 10, maximumUtf8Bytes: 32 * 1024)
+            .Build(new WeekRange(new DateOnly(2026, 7, 27), new DateOnly(2026, 8, 2)), [stale, fresh]);
+
+        Assert.Equal([fresh.Id], prompt.IncludedEventIds);
+        Assert.Contains("fresh summary", prompt.Input);
+        Assert.DoesNotContain("stale summary", prompt.Input);
+    }
+
+    [Fact]
     public async Task Secret_credential_is_absent_from_sqlite_settings_file()
     {
         using var temporary = new TemporaryDirectory();
@@ -207,6 +268,20 @@ public sealed class OpenAiResponsesClientTests
             evidence,
             "source-ref-never-sent",
             .9);
+
+    private static string EnvelopeResponse(string candidateJson) =>
+        JsonSerializer.Serialize(new
+        {
+            status = "completed",
+            output = new object[]
+            {
+                new
+                {
+                    type = "message",
+                    content = new[] { new { type = "output_text", text = candidateJson } }
+                }
+            }
+        });
 
     private static string CandidateJson(Guid evidence) =>
         JsonSerializer.Serialize(new
@@ -245,6 +320,26 @@ public sealed class OpenAiResponsesClientTests
             {
                 Content = new StringContent(response, Encoding.UTF8, "application/json")
             };
+        }
+    }
+
+    private sealed class SequenceHandler(IReadOnlyList<HttpStatusCode> statusCodes, string successBody)
+        : HttpMessageHandler
+    {
+        public int Attempts { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var statusCode = statusCodes[Math.Min(Attempts, statusCodes.Count - 1)];
+            Attempts++;
+            var response = new HttpResponseMessage(statusCode);
+            if (statusCode == HttpStatusCode.OK)
+            {
+                response.Content = new StringContent(successBody, Encoding.UTF8, "application/json");
+            }
+            return Task.FromResult(response);
         }
     }
 

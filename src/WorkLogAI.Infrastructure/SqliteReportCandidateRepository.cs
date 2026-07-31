@@ -136,6 +136,41 @@ public sealed class SqliteReportCandidateRepository(SqliteConnectionFactory conn
         CancellationToken cancellationToken = default) =>
         ReplaceWeekAsync(weekStart, candidates, cancellationToken);
 
+    public async Task<int> SetSelectedAsync(
+        IReadOnlyCollection<Guid> ids,
+        bool selected,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+        var distinctIds = ids.Distinct().ToArray();
+        if (distinctIds.Length == 0)
+        {
+            return 0;
+        }
+
+        await using var connection = connectionFactory.Create();
+        await connection.OpenAsync(cancellationToken);
+        var updated = 0;
+        const int chunkSize = 500;
+        foreach (var chunk in distinctIds.Chunk(chunkSize))
+        {
+            await using var command = connection.CreateCommand();
+            var parameters = chunk.Select((id, index) => (id, name: $"$id{index}")).ToArray();
+            command.CommandText = $"""
+                UPDATE report_candidates
+                SET selected = $selected
+                WHERE id IN ({string.Join(",", parameters.Select(item => item.name))});
+                """;
+            command.Parameters.AddWithValue("$selected", selected ? 1 : 0);
+            foreach (var parameter in parameters)
+            {
+                command.Parameters.AddWithValue(parameter.name, parameter.id.ToString("D"));
+            }
+            updated += await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        return updated;
+    }
+
     public async Task<IReadOnlyList<(Guid Id, string Activity)>> ListActivitiesContainingAsync(
         string needle,
         CancellationToken cancellationToken = default)

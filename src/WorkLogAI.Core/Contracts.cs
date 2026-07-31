@@ -74,6 +74,16 @@ public interface IReportCandidateRepository
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Updates only the selected column for the given candidate ids. Other columns
+    /// (including origin/edited) are left untouched. Returns the number of rows
+    /// actually updated; an empty id collection is a no-op that returns 0.
+    /// </summary>
+    Task<int> SetSelectedAsync(
+        IReadOnlyCollection<Guid> ids,
+        bool selected,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Lists the id and activity text of every stored candidate (any week, any
     /// origin/edited/selected state) whose activity contains <paramref name="needle"/>.
     /// Used by the one-time startup cleanup that strips leftover git file-list text

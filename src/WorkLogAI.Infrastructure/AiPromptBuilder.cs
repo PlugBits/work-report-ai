@@ -21,7 +21,8 @@ public sealed partial class AiPromptBuilder(
         var selected = new List<object>();
         var ids = new List<Guid>();
         var truncated = false;
-        foreach (var sourceEvent in sourceEvents
+        var deduplicated = SourceEventDeduplicator.LatestPerRef(sourceEvents);
+        foreach (var sourceEvent in deduplicated
                      .Where(item => range.Contains(DateOnly.FromDateTime(item.OccurredAt.DateTime)))
                      .GroupBy(item => item.ContentHash, StringComparer.Ordinal)
                      .Select(group => group.OrderBy(item => item.Id).First())

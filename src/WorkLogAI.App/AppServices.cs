@@ -175,6 +175,17 @@ public sealed class AppServices
             var merged = new CandidateMergeService().Merge(result.Candidates);
             result = result with { Candidates = merged };
             await Candidates.SaveGeneratedAsync(range.Start, merged, cancellationToken);
+
+            // AI-shaped candidates now exist for this week's evidence — deselect any
+            // still-selected, unedited local row (quick memo/meeting) whose evidence is
+            // fully covered by them, so the raw local text does not also reach export.
+            var weekCandidates = await Candidates.ListAsync(range.Start, cancellationToken);
+            var supersededIds = LocalCandidateSuppressor.SelectSupersededIds(merged, weekCandidates);
+            if (supersededIds.Count > 0)
+            {
+                await Candidates.SetSelectedAsync(supersededIds, false, cancellationToken);
+            }
+            result = result with { DeselectedLocalCount = supersededIds.Count };
         }
         return result;
     }

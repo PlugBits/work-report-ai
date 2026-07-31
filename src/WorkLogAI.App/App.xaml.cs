@@ -393,6 +393,10 @@ public partial class App : System.Windows.Application
                 $"AI候補 {generation.Candidates.Count}件を生成しました（送信イベント {generation.SentEventCount}件、" +
                 $"収集警告 {collection.Errors.Count}件、切り詰め{(generation.InputTruncated ? "あり" : "なし")}）。" +
                 "不要な行は採用チェックを外してください。";
+            if (generation.DeselectedLocalCount > 0)
+            {
+                banner += $"元メモ由来の行 {generation.DeselectedLocalCount}件の採用を外しました(AI候補に置換)。";
+            }
             new CandidateWindow(_services, range, banner).Show();
         }
         catch (Exception exception)

@@ -124,6 +124,56 @@ public sealed class CandidateMergeService
     }
 }
 
+/// <summary>
+/// After AI generation, decides which pre-selected local candidates (quick memo /
+/// meeting rows built directly from source events, see <see cref="LocalSourceEventMapper"/>)
+/// are now fully superseded by AI-shaped candidates built from the same evidence, so the
+/// raw local row does not also end up selected for export alongside its AI replacement.
+/// </summary>
+public static class LocalCandidateSuppressor
+{
+    /// <summary>
+    /// Returns the ids of <paramref name="weekCandidates"/> that should be deselected:
+    /// local-origin, not user-edited, currently selected rows whose entire evidence set
+    /// is covered by the union of the newly generated <paramref name="aiCandidates"/>'
+    /// evidence. Manual-origin rows and edited rows are never touched. A local row whose
+    /// evidence is only partially covered stays selected — the AI must not silently drop
+    /// a memo it did not fully account for.
+    /// </summary>
+    public static IReadOnlyList<Guid> SelectSupersededIds(
+        IReadOnlyList<ReportCandidate> aiCandidates,
+        IReadOnlyList<ReportCandidate> weekCandidates)
+    {
+        ArgumentNullException.ThrowIfNull(aiCandidates);
+        ArgumentNullException.ThrowIfNull(weekCandidates);
+
+        var coveredEventIds = aiCandidates
+            .SelectMany(candidate => candidate.SourceEventIds)
+            .ToHashSet();
+        if (coveredEventIds.Count == 0)
+        {
+            return [];
+        }
+
+        var superseded = new List<Guid>();
+        foreach (var candidate in weekCandidates)
+        {
+            if (candidate.Origin != CandidateOrigins.Local
+                || candidate.Edited
+                || !candidate.Selected
+                || candidate.SourceEventIds.Count == 0)
+            {
+                continue;
+            }
+            if (candidate.SourceEventIds.All(coveredEventIds.Contains))
+            {
+                superseded.Add(candidate.Id);
+            }
+        }
+        return superseded;
+    }
+}
+
 public sealed class CandidateReportMapper
 {
     public IReadOnlyList<ReportRow> MapSelected(IEnumerable<ReportCandidate> candidates) =>
