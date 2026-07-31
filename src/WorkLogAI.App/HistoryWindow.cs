@@ -47,7 +47,7 @@ public sealed class HistoryWindow : Window
         controls.Children.Add(_weekLabel);
         controls.Children.Add(Button("削除", DeleteSelectedAsync));
         controls.Children.Add(Button("再開", ReopenSelectedAsync));
-        controls.Children.Add(Button("候補を見る", ShowCandidates));
+        controls.Children.Add(Button("この週の候補レビュー", ShowCandidates));
         controls.Children.Add(Button("Excel出力", ExportAsync));
         DockPanel.SetDock(controls, Dock.Top);
         root.Children.Add(controls);

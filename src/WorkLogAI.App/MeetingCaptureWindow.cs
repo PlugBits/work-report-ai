@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Input;
+using System.Windows.Threading;
 using WorkLogAI.Core;
 using WorkLogAI.Infrastructure;
 using Button = System.Windows.Controls.Button;
@@ -349,6 +350,16 @@ public sealed class MeetingCaptureWindow : Window
 
             await OfferAiFormatOrRawExportAsync(id);
 
+            try
+            {
+                await _services.SettingsStore.SetAsync(AppSettingKeys.MeetingWindowPlacement, FormatPlacement());
+            }
+            catch (Exception exception)
+            {
+                ErrorLog.Log("MeetingCaptureWindow.SavePlacement", exception);
+            }
+
+            _closeArmed = true;
             Close();
         }
         catch (Exception exception)
@@ -565,7 +576,11 @@ public sealed class MeetingCaptureWindow : Window
     {
         if (string.IsNullOrWhiteSpace(settings.MeetingOutputFolder))
         {
-            MessageBox.Show(this, "出力フォルダ未設定でMarkdownは書き出されません。", "WorkLog AI");
+            MessageBox.Show(
+                this,
+                "整形結果を保存しました。週報には『週報候補を生成…』を実行すると反映されます。\n" +
+                "（出力フォルダ未設定のためMarkdownは書き出されません。）",
+                "WorkLog AI");
             return;
         }
 
@@ -602,33 +617,48 @@ public sealed class MeetingCaptureWindow : Window
 
         try
         {
-            await _services.SettingsStore.SetAsync(AppSettingKeys.MeetingWindowPlacement, FormatPlacement());
-        }
-        catch (Exception exception)
-        {
-            ErrorLog.Log("MeetingCaptureWindow.SavePlacement", exception);
-        }
-
-        if (_sessionId is { } id && !_ended)
-        {
             try
             {
-                await _services.Meetings.UpdateSessionAsync(
-                    id,
-                    _titleBox.Text.Trim(),
-                    _participantsBox.Text.Trim(),
-                    CurrentKind(),
-                    MeetingStatus.Draft,
-                    null);
+                await _services.SettingsStore.SetAsync(AppSettingKeys.MeetingWindowPlacement, FormatPlacement());
             }
             catch (Exception exception)
             {
-                ErrorLog.Log("MeetingCaptureWindow.PersistDraft", exception);
+                ErrorLog.Log("MeetingCaptureWindow.SavePlacement", exception);
+            }
+
+            if (_sessionId is { } id && !_ended)
+            {
+                try
+                {
+                    await _services.Meetings.UpdateSessionAsync(
+                        id,
+                        _titleBox.Text.Trim(),
+                        _participantsBox.Text.Trim(),
+                        CurrentKind(),
+                        MeetingStatus.Draft,
+                        null);
+                }
+                catch (Exception exception)
+                {
+                    ErrorLog.Log("MeetingCaptureWindow.PersistDraft", exception);
+                }
             }
         }
-
-        _closeArmed = true;
-        Close();
+        catch (Exception exception)
+        {
+            // Defense in depth: a failed draft save must never trap the user in an
+            // unclosable window. The dispatcher-deferred Close below always runs.
+            ErrorLog.Log("MeetingCaptureWindow.Closing", exception);
+        }
+        finally
+        {
+            _closeArmed = true;
+            // Re-entering Close() synchronously from inside this still-active Closing
+            // handler is rejected by WPF whenever every preceding await above completed
+            // synchronously (e.g. a warm SQLite connection). Deferring to a fresh
+            // dispatcher frame guarantees Close() runs only after this handler returns.
+            await Dispatcher.InvokeAsync(Close, DispatcherPriority.Background);
+        }
     }
 
     private string FormatPlacement() => WindowPlacementFormat.Format(Left, Top, Width, Height);

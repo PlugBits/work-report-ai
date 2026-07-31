@@ -95,9 +95,9 @@ public partial class App : System.Windows.Application
         };
 
         var menu = new Forms.ContextMenuStrip();
-        menu.Items.Add("クイック入力", null, (_, _) => ShowQuickCapture());
-        menu.Items.Add("議事録を開始", null, (_, _) => ShowMeetingMode());
-        menu.Items.Add("候補を生成…", null, async (_, _) => await GenerateCandidatesAsync());
+        menu.Items.Add("クイック入力 (Ctrl+Alt+W)", null, (_, _) => ShowQuickCapture());
+        menu.Items.Add("議事録を開始 (Ctrl+Alt+M)", null, (_, _) => ShowMeetingMode());
+        menu.Items.Add("週報候補を生成…", null, async (_, _) => await GenerateCandidatesAsync());
         menu.Items.Add("今週の記録を見る", null, (_, _) => ShowHistory());
         menu.Items.Add("設定", null, (_, _) => ShowSettings());
         menu.Items.Add(new Forms.ToolStripSeparator());
@@ -236,6 +236,7 @@ public partial class App : System.Windows.Application
             return;
         }
 
+        ProgressStatusWindow? progress = null;
         try
         {
             var settings = await _services.Settings.LoadAsync();
@@ -245,14 +246,22 @@ public partial class App : System.Windows.Application
                 return;
             }
 
+            progress = new ProgressStatusWindow();
+            progress.SetStatus("ローカル収集中…");
+            progress.Show();
+
             var collection = await _services.CollectLocalSourcesAsync(range);
             if (collection.Errors.Count > 0)
             {
                 ErrorLog.Log("App.Collection", string.Join("; ", collection.Errors));
             }
+
+            progress?.SetStatus("送信内容を準備中…");
             var preview = await _services.GetGenerationPreviewAsync(range);
             if (!preview.HasCredential)
             {
+                progress?.Close();
+                progress = null;
                 MessageBox.Show(
                     "OpenAI APIキーが設定されていません。設定画面でCredential Managerへ保存してください。\n" +
                     $"ローカル収集は完了しました（新規 {collection.InsertedEvents}件）。",
@@ -263,6 +272,8 @@ public partial class App : System.Windows.Application
             }
             if (preview.AvailableEvents == 0)
             {
+                progress?.Close();
+                progress = null;
                 MessageBox.Show("送信できる今週の根拠イベントがありません。", "WorkLog AI");
                 return;
             }
@@ -271,6 +282,7 @@ public partial class App : System.Windows.Application
                 var breakdown = string.Join(
                     ", ",
                     preview.SourceCounts.Select(item => $"{item.Key}:{item.Value}"));
+                progress?.Hide();
                 var answer = MessageBox.Show(
                     $"OpenAIへ送信しますか？\nモデル: {preview.Model}\n" +
                     $"対象週: {range.Start:yyyy/MM/dd}〜{range.End:yyyy/MM/dd}\n" +
@@ -283,13 +295,19 @@ public partial class App : System.Windows.Application
                     MessageBoxImage.Question);
                 if (answer != MessageBoxResult.Yes)
                 {
+                    progress?.Close();
+                    progress = null;
                     return;
                 }
+                progress?.Show();
             }
 
+            progress?.SetStatus("AI候補を生成中…");
             var generation = await _services.GenerateAiCandidatesAsync(range);
             if (!generation.Succeeded)
             {
+                progress?.Close();
+                progress = null;
                 MessageBox.Show(
                     generation.Error,
                     "WorkLog AI",
@@ -297,15 +315,14 @@ public partial class App : System.Windows.Application
                     MessageBoxImage.Warning);
                 return;
             }
-            MessageBox.Show(
-                $"候補生成が完了しました。\nAI候補: {generation.Candidates.Count}件\n" +
-                $"送信イベント: {generation.SentEventCount}件\n" +
-                $"切り詰め: {(generation.InputTruncated ? "あり" : "なし")}\n" +
-                $"ローカル収集警告: {collection.Errors.Count}件",
-                "WorkLog AI",
-                MessageBoxButton.OK,
-                MessageBoxImage.Information);
-            new CandidateWindow(_services, range).Show();
+
+            progress?.Close();
+            progress = null;
+            var banner =
+                $"AI候補 {generation.Candidates.Count}件を生成しました（送信イベント {generation.SentEventCount}件、" +
+                $"収集警告 {collection.Errors.Count}件、切り詰め{(generation.InputTruncated ? "あり" : "なし")}）。" +
+                "不要な行は採用チェックを外してください。";
+            new CandidateWindow(_services, range, banner).Show();
         }
         catch (Exception exception)
         {
@@ -318,6 +335,7 @@ public partial class App : System.Windows.Application
         }
         finally
         {
+            progress?.Close();
             Interlocked.Exchange(ref _collectionRunning, 0);
         }
     }

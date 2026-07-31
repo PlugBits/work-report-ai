@@ -23,7 +23,7 @@ This repository currently implements Phases 1 through 4, plus a 議事録モー�
 
 ## Phase 2 features
 
-- A user-triggered **候補を生成…** action (originally 今週の候補を生成; now
+- A user-triggered **週報候補を生成…** action (originally 今週の候補を生成; now
   preceded by a week picker, see Usability additions) collects only configured
   local repositories and folders.
 - Local Git collection uses the installed `git` executable without a shell. It reads
@@ -82,10 +82,14 @@ This repository currently implements Phases 1 through 4, plus a 議事録モー�
   published, self-contained EXE — running through `dotnet run`/the dotnet host is
   rejected with a Japanese error — and the option is disabled entirely in
   `--sample-data` mode.
-- **候補を生成…** opens a week picker (今週 plus the previous 7 weeks, newest
+- **週報候補を生成…** opens a week picker (今週 plus the previous 7 weeks, newest
   first) before running collection/generation, instead of always targeting the
   week containing today. The picker's option list is built by the pure
-  `WeekOptionBuilder`; only its Japanese labels live in the App layer.
+  `WeekOptionBuilder`; only its Japanese labels live in the App layer. A small
+  topmost `ProgressStatusWindow` tracks progress through local collection, send
+  preparation, and AI generation, and the weekly review window that opens
+  afterward shows an in-window generation-summary banner instead of a separate
+  completion dialog.
 - The weekly review's **Excel出力** checks coverage of selected rows only and, if
   any Monday–Friday day has zero selected candidates, shows a Yes/No confirmation
   listing the blank weekdays before exporting. Weekends never trigger it.
@@ -135,7 +139,8 @@ This repository currently implements Phases 1 through 4, plus a 議事録モー�
 
 - `Ctrl + Alt + M` (independently toggled from `Ctrl + Alt + W`, and registered only
   once at startup — changing the **議事録ホットキー** checkbox in settings takes
-  effect after a restart) or the tray's **議事録を開始** opens meeting capture. If
+  effect after a restart) or the tray's **議事録を開始 (Ctrl+Alt+M)** opens meeting
+  capture. If
   draft sessions already exist, `MeetingSessionChooserWindow` offers to resume one
   or start fresh first.
 - `MeetingCaptureWindow` is a small always-on-top window: 件名/相手先・参加者/種別
@@ -250,7 +255,7 @@ The paths are injectable for tests and future hosting.
    Manager, not SQLite. Configure the model and send-preview toggle.
 5. Optionally enter a Microsoft Graph client ID (and tenant ID) in **設定**, sign in
    with **Microsoftサインイン**, and enable Outlook mail and/or calendar collection.
-6. Select **候補を生成…**, pick the target week (今週 or one of the previous
+6. Select **週報候補を生成…**, pick the target week (今週 or one of the previous
    7 weeks), to run local (and, if enabled, Graph) collection and, after preview
    approval, generate candidates.
 7. Review cards, edit fields, inspect evidence, merge duplicates, check the
