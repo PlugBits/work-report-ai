@@ -121,8 +121,9 @@ corners) applied consistently across all windows.
   deletes (without suppressing) its stale source event, so the next collection run
   stores the edited text instead of the old one.
 - The weekly review's **Excel出力** checks coverage of selected rows only and, if
-  any Monday–Friday day has zero selected candidates, shows a Yes/No confirmation
-  listing the blank weekdays before exporting. Weekends never trigger it.
+  any Monday–Friday day has zero selected candidates, includes a warning banner
+  listing the blank weekdays in the export preview dialog described below.
+  Weekends never trigger it.
 - Exported Excel sheets use **BIZ UDPゴシック** as the base font; it ships with
   Windows 10 version 1809+ and Windows 11, so no separate install is needed on
   a supported machine. The app UI uses a separate font stack — **Noto Sans JP**,
@@ -131,6 +132,20 @@ corners) applied consistently across all windows.
   week's quick notes for reference, and the **記入状況** coverage bar's day chips now
   double as a filter — clicking a day (or 全て) narrows the cards and notes shown to
   that day, in addition to the existing low-confidence filter.
+- The weekly review's card list is split into two sections: **出力される行 ({n}件)**
+  — selected cards, sorted by date, exactly what **Excel出力** will produce — and a
+  collapsed-by-default **除外中の行 ({m}件)** section with dimmed cards. Toggling a
+  card's **採用** checkbox moves it between the two automatically. The **記入状況**
+  coverage bar now counts selected candidates only, matching this section and the
+  export preview's blank-weekday warning. Each card also shows a small colored
+  origin badge (AI / 手動追加 / メモ / 議事録 / Git / Codex / ファイル / メール / 予定
+  / ローカル) so it is obvious at a glance which rows are AI-generated versus raw
+  local data, backed by a one-line guidance note above the status banner. Before
+  **Excel出力** actually writes the file, an **ExportPreviewWindow** dialog shows a
+  read-only, exactly-as-exported rendering of the selected rows (grouped by day,
+  numbered like the real report) with the blank-weekday warning inline, replacing
+  the previous bare confirmation prompt; **キャンセル** aborts, **出力** proceeds.
+  This rework does not change the monthly **月次まとめを出力…** flow.
 - Git-sourced candidates show the commit subject, body summary, and add/delete
   statistics in **活動内容** instead of the raw changed-file list, which stays
   visible only in the card's 根拠 line; the same file-list-free text is sent to the
@@ -345,7 +360,7 @@ The `WorkLogAI.App` WPF project (`net8.0-windows`) only builds on Windows. On
 non-Windows hosts, build and run `WorkLogAI.Tests` with
 `-p:EnableWindowsTargeting=true`, e.g.
 `dotnet test tests/WorkLogAI.Tests/WorkLogAI.Tests.csproj -p:EnableWindowsTargeting=true`.
-The suite currently has 345 tests.
+The suite currently has 357 tests.
 
 Create the specified self-contained, single-file Windows build with:
 

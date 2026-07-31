@@ -88,8 +88,10 @@
       rejected with a Japanese error — and is disabled in `--sample-data` mode
 - [x] **候補を生成…** opens a week picker (今週 plus the previous 7 weeks) built
       from the pure `WeekOptionBuilder`; cancel aborts without running collection
-- [x] Weekly review Excel export warns (Yes/No) when a selected weekday has zero
-      selected rows, listing the blank days; weekends never warn
+- [x] Weekly review Excel export shows an `ExportPreviewWindow` warning banner when
+      a selected weekday has zero selected rows, listing the blank days; weekends
+      never warn (superseded by the full export-preview dialog — see Post-Phase 4
+      weekly-review UX rework below)
 - [x] Both Excel export flows offer to open the generated file (Yes/No) after a
       successful export
 - [x] Best-effort local error log (`ErrorLog`, Phase 5 operational-quality item)
@@ -308,6 +310,48 @@ Teams, OneDrive, or additional mailboxes).
       manual-memo-coverage/rewriting/confirmation rules, and full rewrite of the
       Excel export/border/column/identity-cell tests for the five-column layout
       (weekly and monthly)
+
+## Post-Phase 4 weekly-review UX rework
+
+- [x] `CandidateWindow`'s single card list is split into two stacked sections:
+      **出力される行 ({n}件)** (`Selected == true`, sorted by parsed work date
+      ascending, unparseable dates last, stable within a date — this section IS
+      what the export will contain) and a collapsed-by-default **除外中の行
+      ({m}件)** `Expander` (dimmed cards, `#F3F4F6` background, 0.75 opacity);
+      toggling a card's 採用 checkbox moves it between sections via a debounced,
+      `Dispatcher`-deferred re-render subscribed once per `CandidateEditor` at
+      creation time (load/merge/manual-add/persist), never re-subscribed on
+      render, so the render itself never re-enters while the triggering checkbox
+      click is still being processed
+- [x] The day filter and low-confidence filter apply to both sections; **記入状況**
+      coverage bar now counts selected candidates only, matching the 出力される行
+      section and the export preview's blank-weekday warning
+- [x] Pure `CandidateBadge.Resolve(origin, firstSourceType)` (Core, with unit
+      tests) maps each card to a small colored origin badge — `ai` → **AI**
+      (`#2563EB`), `manual` → **手動追加** (`#0D9488`), `local` → by its first
+      backing source event's type (メモ/議事録/Git/Codex/ファイル/メール/予定/
+      ローカル fallback); resolved once per `CandidateEditor` at creation and
+      rendered top-left of the card header, before the 採用 checkbox; the App
+      layer only maps `Badge.HexColor` to a `SolidColorBrush`
+- [x] A muted one-line guidance `TextBlock` under the action bar (above the status
+      banner) tells the user AI rows are normally what to keep and that a 「メモ」
+      badge left in 出力される行 means AI did not pick up that memo
+- [x] Verified (no behavior change needed): `LocalSourceEventMapper` already maps
+      git/codex/file/mail/calendar rows `Selected: false` and only
+      manual/meeting rows `Selected: true`; `LocalCandidateSuppressor` already
+      deselects local rows fully superseded by AI evidence — both already land
+      the raw/local rows in 除外中の行 automatically under the new two-section
+      layout
+- [x] New `ExportPreviewWindow` (modeled on `WeekPickerWindow`'s dialog style, but
+      700×600 and resizable) replaces the old blank-weekday confirmation
+      `MessageBox` in the weekly `Excel出力` flow: a read-only rendering of
+      `DailyReportGrouper.Group(rows)` (per-day bold `{yyyy/MM/dd} ({曜})` header,
+      then per-item `{circled number} {WorkItem} — {Activity}` plus an indented
+      `→ {ResultOrNext}` line when non-blank), an amber blank-weekday warning
+      banner when applicable, and **出力**/**キャンセル** buttons; cancel aborts
+      the export, **出力** proceeds to the existing exporter call and
+      `ExportResultPrompt`. The monthly export flow (`App.xaml.cs`,
+      **月次まとめを出力…**) is unchanged this round.
 
 ## Explicitly not implemented after Phase 4
 
