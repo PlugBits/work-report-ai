@@ -84,6 +84,54 @@ public interface IDatabaseInitializer
     Task InitializeAsync(CancellationToken cancellationToken = default);
 }
 
+public interface IMeetingRepository
+{
+    Task<MeetingSession> CreateSessionAsync(
+        string title,
+        string participants,
+        MeetingKind kind,
+        DateTimeOffset? startedAt = null,
+        CancellationToken cancellationToken = default);
+
+    Task UpdateSessionAsync(
+        Guid sessionId,
+        string title,
+        string participants,
+        MeetingKind kind,
+        MeetingStatus status,
+        DateTimeOffset? endedAt,
+        CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<MeetingSession>> ListSessionsAsync(
+        MeetingStatus? status = null,
+        CancellationToken cancellationToken = default);
+
+    Task<MeetingSession?> GetSessionAsync(
+        Guid sessionId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Appends a line, assigning the next sequential line_no for the session.</summary>
+    Task<MeetingLine> AddLineAsync(
+        Guid sessionId,
+        MeetingMarker marker,
+        string text,
+        DateTimeOffset? loggedAt = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Updates marker/text in place. line_no is never renumbered.</summary>
+    Task UpdateLineAsync(
+        Guid lineId,
+        MeetingMarker marker,
+        string text,
+        CancellationToken cancellationToken = default);
+
+    Task DeleteLineAsync(Guid lineId, CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<MeetingLine>> ListLinesAsync(
+        Guid sessionId,
+        CancellationToken cancellationToken = default);
+}
+
 public interface ICredentialStore
 {
     Task<string?> GetAsync(string target, CancellationToken cancellationToken = default);

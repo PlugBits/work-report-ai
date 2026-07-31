@@ -19,6 +19,7 @@ public sealed class AppServices
         Notes = new SqliteQuickNoteRepository(connections);
         SourceEvents = new SqliteSourceEventRepository(connections);
         Candidates = new SqliteReportCandidateRepository(connections);
+        Meetings = new SqliteMeetingRepository(connections);
         SettingsStore = new SqliteSettingsStore(connections);
         Settings = new AppSettingsService(SettingsStore);
         Exporter = new ClosedXmlWeeklyReportExporter();
@@ -33,6 +34,8 @@ public sealed class AppServices
     public ISourceEventRepository SourceEvents { get; }
 
     public IReportCandidateRepository Candidates { get; }
+
+    public IMeetingRepository Meetings { get; }
 
     public IWeeklyReportExporter Exporter { get; }
 

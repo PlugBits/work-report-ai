@@ -39,6 +39,9 @@ public sealed class SettingsWindow : Window
     private readonly Button _graphSignOut = new() { Content = "サインアウト", Padding = new Thickness(10, 4, 10, 4), Margin = new Thickness(8, 0, 0, 0) };
     private readonly TextBlock _graphStatus = new() { Text = "未サインイン", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 0, 6) };
     private readonly Func<string, string, GraphAuthService> _graphAuthFactory;
+    private readonly TextBox _meetingOutputFolder = new();
+    private readonly CheckBox _meetingIncludeRawLog = new() { Content = "生ログをMDに同梱" };
+    private readonly CheckBox _meetingHotkeyEnabled = new() { Content = "Ctrl+Alt+M を有効化（再起動後に反映）" };
 
     public SettingsWindow(
         AppSettingsService settings,
@@ -54,14 +57,14 @@ public sealed class SettingsWindow : Window
         _sampleMode = sampleMode;
         Title = "設定 - WorkLog AI";
         Width = 560;
-        Height = 1020;
+        Height = 1130;
         ResizeMode = ResizeMode.NoResize;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
 
         var grid = new Grid { Margin = new Thickness(16) };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
         grid.ColumnDefinitions.Add(new ColumnDefinition());
-        for (var i = 0; i < 23; i++)
+        for (var i = 0; i < 26; i++)
         {
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         }
@@ -122,6 +125,9 @@ public sealed class SettingsWindow : Window
                 }
             }
         });
+        AddRow(grid, 23, "議事録出力フォルダ", _meetingOutputFolder);
+        AddRow(grid, 24, "議事録Markdown", _meetingIncludeRawLog);
+        AddRow(grid, 25, "議事録ホットキー", _meetingHotkeyEnabled);
 
         var buttons = new StackPanel
         {
@@ -140,7 +146,7 @@ public sealed class SettingsWindow : Window
         };
         buttons.Children.Add(save);
         buttons.Children.Add(cancel);
-        Grid.SetRow(buttons, 23);
+        Grid.SetRow(buttons, 26);
         Grid.SetColumnSpan(buttons, 2);
 
         grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -211,6 +217,9 @@ public sealed class SettingsWindow : Window
         _graphTenantId.Text = values.GraphTenantId;
         _graphMailEnabled.IsChecked = values.GraphMailEnabled;
         _graphCalendarEnabled.IsChecked = values.GraphCalendarEnabled;
+        _meetingOutputFolder.Text = values.MeetingOutputFolder;
+        _meetingIncludeRawLog.IsChecked = values.MeetingIncludeRawLog;
+        _meetingHotkeyEnabled.IsChecked = values.MeetingHotkeyEnabled;
         UpdateGraphSignInEnabled();
         await RefreshGraphStatusAsync();
     }
@@ -318,7 +327,10 @@ public sealed class SettingsWindow : Window
                 string.IsNullOrWhiteSpace(_graphTenantId.Text) ? "common" : _graphTenantId.Text.Trim(),
                 _graphMailEnabled.IsChecked == true,
                 _graphCalendarEnabled.IsChecked == true,
-                _reportTitle.Text.Trim()));
+                _reportTitle.Text.Trim(),
+                _meetingOutputFolder.Text.Trim(),
+                _meetingIncludeRawLog.IsChecked == true,
+                _meetingHotkeyEnabled.IsChecked == true));
             if (_removeApiKey.IsChecked == true)
             {
                 await _credentials.DeleteAsync(CredentialTargets.OpenAiApiKey);

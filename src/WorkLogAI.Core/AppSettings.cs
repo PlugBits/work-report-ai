@@ -20,6 +20,16 @@ public static class AppSettingKeys
     public const string GraphTenantId = "graph.tenant_id";
     public const string GraphMailEnabled = "graph.mail_enabled";
     public const string GraphCalendarEnabled = "graph.calendar_enabled";
+    public const string MeetingOutputFolder = "meeting.output_folder";
+    public const string MeetingIncludeRawLog = "meeting.include_raw_log";
+    public const string MeetingHotkeyEnabled = "meeting.hotkey_enabled";
+
+    /// <summary>
+    /// Window placement is UI state, not a user preference — it is read/written
+    /// directly through ISettingsStore (like ReminderLastShownDate) rather than
+    /// going through AppSettingsSnapshot/AppSettingsService.
+    /// </summary>
+    public const string MeetingWindowPlacement = "meeting.window_placement";
 }
 
 public sealed class AppSettingsService(ISettingsStore store)
@@ -48,6 +58,9 @@ public sealed class AppSettingsService(ISettingsStore store)
         var graphTenantId = await store.GetAsync(AppSettingKeys.GraphTenantId, cancellationToken);
         var graphMailEnabledValue = await store.GetAsync(AppSettingKeys.GraphMailEnabled, cancellationToken);
         var graphCalendarEnabledValue = await store.GetAsync(AppSettingKeys.GraphCalendarEnabled, cancellationToken);
+        var meetingOutputFolder = await store.GetAsync(AppSettingKeys.MeetingOutputFolder, cancellationToken);
+        var meetingIncludeRawLogValue = await store.GetAsync(AppSettingKeys.MeetingIncludeRawLog, cancellationToken);
+        var meetingHotkeyEnabledValue = await store.GetAsync(AppSettingKeys.MeetingHotkeyEnabled, cancellationToken);
 
         var weekStartsOn = Enum.TryParse<DayOfWeek>(weekValue, true, out var parsed)
             ? parsed
@@ -78,7 +91,10 @@ public sealed class AppSettingsService(ISettingsStore store)
             string.IsNullOrWhiteSpace(graphTenantId) ? "common" : graphTenantId.Trim(),
             bool.TryParse(graphMailEnabledValue, out var graphMailEnabled) && graphMailEnabled,
             bool.TryParse(graphCalendarEnabledValue, out var graphCalendarEnabled) && graphCalendarEnabled,
-            reportTitle);
+            reportTitle,
+            string.IsNullOrWhiteSpace(meetingOutputFolder) ? string.Empty : meetingOutputFolder.Trim(),
+            !bool.TryParse(meetingIncludeRawLogValue, out var meetingIncludeRawLog) || meetingIncludeRawLog,
+            !bool.TryParse(meetingHotkeyEnabledValue, out var meetingHotkeyEnabled) || meetingHotkeyEnabled);
     }
 
     public async Task SaveAsync(AppSettingsSnapshot settings, CancellationToken cancellationToken = default)
@@ -136,6 +152,18 @@ public sealed class AppSettingsService(ISettingsStore store)
             AppSettingKeys.GraphCalendarEnabled,
             settings.GraphCalendarEnabled.ToString(),
             cancellationToken);
+        await store.SetAsync(
+            AppSettingKeys.MeetingOutputFolder,
+            settings.MeetingOutputFolder,
+            cancellationToken);
+        await store.SetAsync(
+            AppSettingKeys.MeetingIncludeRawLog,
+            settings.MeetingIncludeRawLog.ToString(),
+            cancellationToken);
+        await store.SetAsync(
+            AppSettingKeys.MeetingHotkeyEnabled,
+            settings.MeetingHotkeyEnabled.ToString(),
+            cancellationToken);
     }
 
     private static IReadOnlyList<string> ParsePaths(string? value) =>
@@ -162,7 +190,10 @@ public sealed record AppSettingsSnapshot(
     string GraphTenantId = "common",
     bool GraphMailEnabled = false,
     bool GraphCalendarEnabled = false,
-    string ReportTitle = "業務週報")
+    string ReportTitle = "業務週報",
+    string MeetingOutputFolder = "",
+    bool MeetingIncludeRawLog = true,
+    bool MeetingHotkeyEnabled = true)
 {
     public static TimeOnly DefaultReminderTime { get; } = new(17, 0);
 
