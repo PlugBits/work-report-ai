@@ -248,7 +248,7 @@ public interface IWeeklyReportExporter
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Renders the same per-day/社内-社外 grouped layout as <see cref="ExportAsync"/>,
+    /// Renders the same per-day grouped layout as <see cref="ExportAsync"/>,
     /// but for a whole calendar month spanning any number of week_start groupings —
     /// used by the monthly summary export (月次まとめ). The filename is
     /// <c>{sanitized title} 月次 {yyyyMM}.xlsx</c> and the title cell reads

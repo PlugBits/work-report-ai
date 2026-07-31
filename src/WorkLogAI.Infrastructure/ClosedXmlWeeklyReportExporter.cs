@@ -110,54 +110,48 @@ public sealed class ClosedXmlWeeklyReportExporter : IWeeklyReportExporter
 
         var dailyRows = DailyReportGrouper.Group(rows.OrderBy(row => row.Date));
 
-        var employeeName = identity.EmployeeName?.Trim() ?? string.Empty;
-        var surname = string.IsNullOrWhiteSpace(employeeName)
-            ? null
-            : employeeName.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+        const int MinimumBlockRows = 4;
 
         var rowNumber = 4;
-        DateOnly? previousDate = null;
-        var spacerRowNumbers = new List<int>();
+        var blockBoundaries = new List<(int UpperRow, int LowerRow)>();
 
         foreach (var day in dailyRows)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (previousDate is not null && day.Date != previousDate.Value)
-            {
-                // Date changed from the previous row: insert one blank spacer
-                // row before starting the next day's rows. Rows sharing a
-                // date (the 社内/社外 pair) stay adjacent — no spacer between
-                // them. The spacer is an ordinary empty row within the
-                // continuous bordered grid, with no forced height, so it
-                // behaves like any other row under Excel's auto-fit.
-                spacerRowNumbers.Add(rowNumber);
-                rowNumber++;
-            }
+            var contentRowNumber = rowNumber;
 
-            var dateLines = new List<string> { CategoryLabel(day.Category), day.Date.ToString("yyyy/MM/dd") };
-            if (!string.IsNullOrEmpty(surname))
-            {
-                dateLines.Add(surname);
-            }
-
-            sheet.Cell(rowNumber, 1).Value = string.Join("\n", dateLines);
+            sheet.Cell(contentRowNumber, 1).Value =
+                $"{day.Date:yyyy/MM/dd}\n({JapaneseWeekday(day.Date.DayOfWeek)})";
 
             var workItemLines = day.Items
                 .Select(item => $"{DailyReportGrouper.CircledNumber(item.Number)} {item.WorkItem}");
-            sheet.Cell(rowNumber, 2).Value = string.Join("\n", workItemLines);
+            sheet.Cell(contentRowNumber, 2).Value = string.Join("\n", workItemLines);
 
             var activityLines = day.Items
                 .Select(item => $"{DailyReportGrouper.CircledNumber(item.Number)} {item.Activity}");
-            sheet.Cell(rowNumber, 3).Value = string.Join("\n", activityLines);
+            sheet.Cell(contentRowNumber, 3).Value = string.Join("\n", activityLines);
 
             var resultLines = day.Items
                 .Where(item => !string.IsNullOrWhiteSpace(item.ResultOrNext))
                 .Select(item => $"{DailyReportGrouper.CircledNumber(item.Number)} {item.ResultOrNext}");
-            sheet.Cell(rowNumber, 4).Value = string.Join("\n", resultLines);
+            sheet.Cell(contentRowNumber, 4).Value = string.Join("\n", resultLines);
 
-            previousDate = day.Date;
             rowNumber++;
+
+            // Every day's block — its content row plus blank rows — spans a
+            // uniform minimum of MinimumBlockRows sheet rows, so each day
+            // occupies the same visual height regardless of item count. The
+            // blank rows are ordinary empty rows within the continuous
+            // bordered grid, with no forced height, so they behave like any
+            // other row under Excel's auto-fit.
+            const int ContentRowCount = 1;
+            var blankRowCount = Math.Max(1, MinimumBlockRows - ContentRowCount);
+            for (var index = 0; index < blankRowCount; index++)
+            {
+                blockBoundaries.Add((rowNumber - 1, rowNumber));
+                rowNumber++;
+            }
         }
 
         var lastRow = Math.Max(3, rowNumber - 1);
@@ -169,18 +163,18 @@ public sealed class ClosedXmlWeeklyReportExporter : IWeeklyReportExporter
         reportRange.Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
         reportRange.Style.Border.InsideBorder = XLBorderStyleValues.Thin;
 
-        foreach (var spacerRowNumber in spacerRowNumbers)
+        foreach (var (upperRow, lowerRow) in blockBoundaries)
         {
-            // Merge each spacer row with the previous date's block: drop the
-            // horizontal line between the last content row of that date and
-            // the spacer that follows it. Both adjacent edges must be
-            // cleared — Excel renders a line if either side still has one.
-            // The spacer's own bottom edge (the boundary before the next
-            // date) and its left/right borders are left untouched.
-            sheet.Range(spacerRowNumber - 1, 1, spacerRowNumber - 1, 4).Style.Border.BottomBorder =
-                XLBorderStyleValues.None;
-            sheet.Range(spacerRowNumber, 1, spacerRowNumber, 4).Style.Border.TopBorder =
-                XLBorderStyleValues.None;
+            // Each day block (content row + its blank rows) is one visual
+            // cell region per column: drop the horizontal line at every
+            // internal boundary within the block. Both adjacent edges must
+            // be cleared — Excel renders a line if either side still has
+            // one. The block's own bottom edge (the last blank row's bottom
+            // border) is never touched here, so it stays Thin as the
+            // boundary before the next day's block; left/right borders are
+            // left untouched too.
+            sheet.Range(upperRow, 1, upperRow, 4).Style.Border.BottomBorder = XLBorderStyleValues.None;
+            sheet.Range(lowerRow, 1, lowerRow, 4).Style.Border.TopBorder = XLBorderStyleValues.None;
         }
 
         sheet.Column(1).Width = 20.14; // 146 px
@@ -199,8 +193,17 @@ public sealed class ClosedXmlWeeklyReportExporter : IWeeklyReportExporter
         return Task.FromResult(path);
     }
 
-    private static string CategoryLabel(string category) =>
-        category == ReportCategories.External ? "社外" : "社内";
+    private static string JapaneseWeekday(DayOfWeek dayOfWeek) => dayOfWeek switch
+    {
+        DayOfWeek.Monday => "月",
+        DayOfWeek.Tuesday => "火",
+        DayOfWeek.Wednesday => "水",
+        DayOfWeek.Thursday => "木",
+        DayOfWeek.Friday => "金",
+        DayOfWeek.Saturday => "土",
+        DayOfWeek.Sunday => "日",
+        _ => "?"
+    };
 }
 
 public static class ReportFileNameSanitizer

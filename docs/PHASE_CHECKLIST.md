@@ -261,7 +261,7 @@ Teams, OneDrive, or additional mailboxes).
       calendar month — spanning any number of weeks — via
       `IReportCandidateRepository.ListSelectedByDateRangeAsync` and
       `IWeeklyReportExporter.ExportMonthAsync`, reusing the exact weekly
-      per-day/社内-社外 grouped layout. Filename
+      per-day grouped layout. Filename
       `{sanitized title} 月次 {yyyyMM}.xlsx`; an empty month shows
       「対象月に採用済みの行がありません。」 instead of writing a file
 - [x] Automated tests: retry policy (retryable/non-retryable status, Retry-After
@@ -270,7 +270,7 @@ Teams, OneDrive, or additional mailboxes).
       sourceRef-latest-wins deduplication (including reversed-input-order
       determinism), data retention (unreferenced-deleted/referenced-kept/
       recent-kept/idempotent), monthly repository range query, monthly export
-      (filename, title cell, multi-week day-grouping, category split), and month
+      (filename, title cell, multi-week day-grouping), and month
       option builder (count, ordering, year-boundary wrap) — no live API test
 
 ## Explicitly not implemented after Phase 4
