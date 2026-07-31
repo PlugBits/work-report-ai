@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -15,6 +16,7 @@ public sealed class QuickCaptureWindow : Window
     private readonly IQuickNoteRepository _notes;
     private readonly TextBox _input;
     private bool _saving;
+    private bool _closing;
 
     public QuickCaptureWindow(IQuickNoteRepository notes)
     {
@@ -46,11 +48,24 @@ public sealed class QuickCaptureWindow : Window
         };
         Deactivated += (_, _) =>
         {
-            if (!_saving)
+            if (!_saving && !_closing)
             {
-                Close();
+                try
+                {
+                    Close();
+                }
+                catch (Exception exception)
+                {
+                    ErrorLog.Log("QuickCapture.DeactivatedClose", exception);
+                }
             }
         };
+    }
+
+    protected override void OnClosing(CancelEventArgs e)
+    {
+        _closing = true;
+        base.OnClosing(e);
     }
 
     private async void OnPreviewKeyDown(object sender, KeyEventArgs e)

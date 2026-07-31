@@ -100,6 +100,9 @@ This repository currently implements Phases 1 through 4, plus a 議事録モー�
   `%LOCALAPPDATA%\WorkLog AI\Logs\worklog-YYYYMM.log`, created on demand and
   pruned past 3 months. It never logs note bodies, candidate text, mail content,
   or secrets, and logging itself can never throw.
+- App-wide handlers for dispatcher, AppDomain, and unobserved task exceptions log
+  unexpected UI errors to `ErrorLog` and keep the tray app running instead of the
+  process dying silently and leaving a ghost tray icon.
 - A weekly, best-effort SQLite file backup (`DatabaseBackupService`) runs at
   startup (skipped in `--sample-data` mode) before any database connection opens.
   If the production DB exists and no backup is newer than 7 days, it copies the
