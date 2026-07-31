@@ -152,10 +152,10 @@ public sealed class ClosedXmlWeeklyReportExporter : IWeeklyReportExporter
         reportRange.Style.Alignment.Vertical = XLAlignmentVerticalValues.Top;
         reportRange.Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
         reportRange.Style.Border.InsideBorder = XLBorderStyleValues.Thin;
-        sheet.Column(1).Width = 12;
-        sheet.Column(2).Width = 26;
-        sheet.Column(3).Width = 46;
-        sheet.Column(4).Width = 42;
+        sheet.Column(1).Width = 20.14; // 146 px
+        sheet.Column(2).Width = 39.71; // 283 px
+        sheet.Column(3).Width = 69.29; // 490 px
+        sheet.Column(4).Width = 60.14; // 426 px
         sheet.Rows(1, lastRow).AdjustToContents();
 
         sheet.PageSetup.PageOrientation = XLPageOrientation.Landscape;
