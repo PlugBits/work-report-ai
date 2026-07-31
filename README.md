@@ -16,7 +16,8 @@ This repository currently implements Phases 1 through 4.
   action extended by Phase 2.
 - Weekly history supports previous/next week, soft deletion, reopening, and manual
   XLSX export.
-- Settings include company, employee, week start, and Excel output directory.
+- Settings include company, employee, report title, week start, and Excel output
+  directory.
 - A `--sample-data` mode uses a separate database and seeds three example notes.
 
 ## Phase 2 features
@@ -207,7 +208,8 @@ The paths are injectable for tests and future hosting.
    Phase 1 report (also offers to open the file after export).
 
 The generated file is named
-`業務週報(USA太田) YYYYMMDD-YYYYMMDD.xlsx`.
+`業務週報 YYYYMMDD-YYYYMMDD.xlsx`. The title (and the company/employee
+name shown alongside it) are configurable in **設定**.
 
 ## Security
 

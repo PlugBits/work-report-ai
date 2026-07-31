@@ -135,9 +135,9 @@ public sealed class StorageTests
         await new SqliteDatabaseInitializer(factory).InitializeAsync();
         var store = new SqliteSettingsStore(factory);
 
-        await store.SetAsync("profile.company_name", "YAHATA USA");
+        await store.SetAsync("profile.company_name", "サンプル株式会社");
 
-        Assert.Equal("YAHATA USA", await store.GetAsync("profile.company_name"));
+        Assert.Equal("サンプル株式会社", await store.GetAsync("profile.company_name"));
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => store.SetAsync("openai.api-key", "must-not-be-stored"));
     }
@@ -151,8 +151,8 @@ public sealed class StorageTests
         await new SqliteDatabaseInitializer(factory).InitializeAsync();
         var service = new AppSettingsService(new SqliteSettingsStore(factory));
         var expected = new AppSettingsSnapshot(
-            "YAHATA USA",
-            "太田 貴也",
+            "サンプル株式会社",
+            "山田 太郎",
             DayOfWeek.Sunday,
             temporary.Path,
             [@"C:\repos\one", @"C:\repos\two"],
@@ -181,8 +181,8 @@ public sealed class StorageTests
         await new SqliteDatabaseInitializer(factory).InitializeAsync();
         var service = new AppSettingsService(new SqliteSettingsStore(factory));
         var expected = new AppSettingsSnapshot(
-            "YAHATA USA",
-            "太田 貴也",
+            "サンプル株式会社",
+            "山田 太郎",
             DayOfWeek.Monday,
             temporary.Path,
             ReminderEnabled: false,
@@ -230,8 +230,8 @@ public sealed class StorageTests
         Assert.False(unset.GraphCalendarEnabled);
 
         var expected = new AppSettingsSnapshot(
-            "YAHATA USA",
-            "太田 貴也",
+            "サンプル株式会社",
+            "山田 太郎",
             DayOfWeek.Monday,
             temporary.Path,
             GraphClientId: "11111111-2222-3333-4444-555555555555",
@@ -263,6 +263,45 @@ public sealed class StorageTests
         await store.SetAsync(AppSettingKeys.GraphCalendarEnabled, "false");
 
         Assert.Equal("common", await store.GetAsync(AppSettingKeys.GraphTenantId));
+    }
+
+    [Fact]
+    public async Task Report_title_setting_round_trips()
+    {
+        using var temporary = new TemporaryDirectory();
+        var factory = new SqliteConnectionFactory(
+            new FixedDatabasePathProvider(Path.Combine(temporary.Path, "report-title.db")));
+        await new SqliteDatabaseInitializer(factory).InitializeAsync();
+        var service = new AppSettingsService(new SqliteSettingsStore(factory));
+        var expected = new AppSettingsSnapshot(
+            "サンプル株式会社",
+            "山田 太郎",
+            DayOfWeek.Monday,
+            temporary.Path,
+            ReportTitle: "カスタム週報");
+
+        await service.SaveAsync(expected);
+        var actual = await service.LoadAsync();
+
+        Assert.Equal("カスタム週報", actual.ReportTitle);
+    }
+
+    [Fact]
+    public async Task Report_title_falls_back_to_default_when_unset_or_blank()
+    {
+        using var temporary = new TemporaryDirectory();
+        var factory = new SqliteConnectionFactory(
+            new FixedDatabasePathProvider(Path.Combine(temporary.Path, "report-title-default.db")));
+        await new SqliteDatabaseInitializer(factory).InitializeAsync();
+        var store = new SqliteSettingsStore(factory);
+        var service = new AppSettingsService(store);
+
+        var unset = await service.LoadAsync();
+        Assert.Equal("業務週報", unset.ReportTitle);
+
+        await store.SetAsync(AppSettingKeys.ReportTitle, "   ");
+        var blank = await service.LoadAsync();
+        Assert.Equal("業務週報", blank.ReportTitle);
     }
 
     [Fact]

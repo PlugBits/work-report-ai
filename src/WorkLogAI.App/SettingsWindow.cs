@@ -17,6 +17,7 @@ public sealed class SettingsWindow : Window
     private readonly bool _sampleMode;
     private readonly TextBox _company = new();
     private readonly TextBox _employee = new();
+    private readonly TextBox _reportTitle = new();
     private readonly ComboBox _weekStart = new();
     private readonly TextBox _outputDirectory = new();
     private readonly TextBox _repositories = MultiLineTextBox();
@@ -53,62 +54,63 @@ public sealed class SettingsWindow : Window
         _sampleMode = sampleMode;
         Title = "設定 - WorkLog AI";
         Width = 560;
-        Height = 980;
+        Height = 1020;
         ResizeMode = ResizeMode.NoResize;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
 
         var grid = new Grid { Margin = new Thickness(16) };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
         grid.ColumnDefinitions.Add(new ColumnDefinition());
-        for (var i = 0; i < 22; i++)
+        for (var i = 0; i < 23; i++)
         {
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         }
 
         AddRow(grid, 0, "会社名", _company);
         AddRow(grid, 1, "氏名", _employee);
+        AddRow(grid, 2, "週報タイトル", _reportTitle);
         _weekStart.ItemsSource = Enum.GetValues<DayOfWeek>();
-        AddRow(grid, 2, "週の開始曜日", _weekStart);
-        AddRow(grid, 3, "Excel保存先", _outputDirectory);
-        AddRow(grid, 4, "ホットキー", new TextBlock
+        AddRow(grid, 3, "週の開始曜日", _weekStart);
+        AddRow(grid, 4, "Excel保存先", _outputDirectory);
+        AddRow(grid, 5, "ホットキー", new TextBlock
         {
             Text = "Ctrl + Alt + W",
             Margin = new Thickness(4, 8, 4, 8)
         });
-        AddRow(grid, 5, "ローカルGit\n(1行1パス)", _repositories);
-        AddRow(grid, 6, "Codexセッション", _codexFolder);
-        AddRow(grid, 7, "更新ファイル対象\n(1行1パス)", _recentFolders);
-        AddRow(grid, 8, "収集範囲", new TextBlock
+        AddRow(grid, 6, "ローカルGit\n(1行1パス)", _repositories);
+        AddRow(grid, 7, "Codexセッション", _codexFolder);
+        AddRow(grid, 8, "更新ファイル対象\n(1行1パス)", _recentFolders);
+        AddRow(grid, 9, "収集範囲", new TextBlock
         {
             Text = "設定したローカルフォルダーのみ。ファイル本文・diff・コマンド引数は収集しません。",
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(4, 8, 4, 8)
         });
-        AddRow(grid, 9, "OpenAIモデル", _model);
-        AddRow(grid, 10, "送信前確認", _preview);
-        AddRow(grid, 11, "OpenAI APIキー", _apiKey);
-        AddRow(grid, 12, "キー状態", new StackPanel
+        AddRow(grid, 10, "OpenAIモデル", _model);
+        AddRow(grid, 11, "送信前確認", _preview);
+        AddRow(grid, 12, "OpenAI APIキー", _apiKey);
+        AddRow(grid, 13, "キー状態", new StackPanel
         {
             Children = { _credentialStatus, _removeApiKey }
         });
-        AddRow(grid, 13, "秘密情報", new TextBlock
+        AddRow(grid, 14, "秘密情報", new TextBlock
         {
             Text = "APIキーはWindows Credential Managerだけに保存します。既存キーは表示しません。",
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(4, 8, 4, 8)
         });
-        AddRow(grid, 14, "メモ0件リマインド", _reminderEnabled);
-        AddRow(grid, 15, "リマインド時刻(HH:mm)", _reminderTime);
+        AddRow(grid, 15, "メモ0件リマインド", _reminderEnabled);
+        AddRow(grid, 16, "リマインド時刻(HH:mm)", _reminderTime);
         _autoStart.IsEnabled = !_sampleMode;
-        AddRow(grid, 16, "自動起動", _autoStart);
-        AddRow(grid, 17, "クライアントID", _graphClientId);
-        AddRow(grid, 18, "テナントID", _graphTenantId);
-        AddRow(grid, 19, "Outlookメール", _graphMailEnabled);
-        AddRow(grid, 20, "Outlookカレンダー", _graphCalendarEnabled);
+        AddRow(grid, 17, "自動起動", _autoStart);
+        AddRow(grid, 18, "クライアントID", _graphClientId);
+        AddRow(grid, 19, "テナントID", _graphTenantId);
+        AddRow(grid, 20, "Outlookメール", _graphMailEnabled);
+        AddRow(grid, 21, "Outlookカレンダー", _graphCalendarEnabled);
         _graphSignIn.Click += GraphSignInAsync;
         _graphSignOut.Click += GraphSignOutAsync;
         _graphClientId.TextChanged += (_, _) => UpdateGraphSignInEnabled();
-        AddRow(grid, 21, "Microsoftサインイン", new StackPanel
+        AddRow(grid, 22, "Microsoftサインイン", new StackPanel
         {
             Children =
             {
@@ -138,7 +140,7 @@ public sealed class SettingsWindow : Window
         };
         buttons.Children.Add(save);
         buttons.Children.Add(cancel);
-        Grid.SetRow(buttons, 22);
+        Grid.SetRow(buttons, 23);
         Grid.SetColumnSpan(buttons, 2);
 
         grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -173,6 +175,7 @@ public sealed class SettingsWindow : Window
         var values = await _settings.LoadAsync();
         _company.Text = values.CompanyName;
         _employee.Text = values.EmployeeName;
+        _reportTitle.Text = values.ReportTitle;
         _weekStart.SelectedItem = values.WeekStartsOn;
         _outputDirectory.Text = values.ExcelOutputDirectory;
         _repositories.Text = string.Join(Environment.NewLine, values.LocalRepositoryPaths);
@@ -314,7 +317,8 @@ public sealed class SettingsWindow : Window
                 _graphClientId.Text.Trim(),
                 string.IsNullOrWhiteSpace(_graphTenantId.Text) ? "common" : _graphTenantId.Text.Trim(),
                 _graphMailEnabled.IsChecked == true,
-                _graphCalendarEnabled.IsChecked == true));
+                _graphCalendarEnabled.IsChecked == true,
+                _reportTitle.Text.Trim()));
             if (_removeApiKey.IsChecked == true)
             {
                 await _credentials.DeleteAsync(CredentialTargets.OpenAiApiKey);

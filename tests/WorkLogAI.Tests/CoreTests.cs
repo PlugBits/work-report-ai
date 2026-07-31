@@ -37,7 +37,7 @@ public sealed class CoreTests
         var note = new QuickNote(
             Guid.Parse("4bca44b5-10c1-4b93-9c15-520b08ec53c7"),
             new DateTimeOffset(2026, 7, 30, 14, 30, 0, TimeSpan.FromHours(-4)),
-            "GPM初品5点 検査 全数合格 出荷指示");
+            "顧客A初品5点 検査 全数合格 出荷指示");
 
         var row = new ManualReportMapper().Map(note);
 

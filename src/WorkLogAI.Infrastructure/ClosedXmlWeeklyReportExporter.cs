@@ -5,10 +5,12 @@ namespace WorkLogAI.Infrastructure;
 
 public sealed class ClosedXmlWeeklyReportExporter : IWeeklyReportExporter
 {
-    private const string ReportName = "業務週報(USA太田)";
-
-    public string CreateFileName(WeekRange range) =>
-        $"{ReportName} {range.Start:yyyyMMdd}-{range.End:yyyyMMdd}.xlsx";
+    public string CreateFileName(WeekRange range, ReportIdentity identity)
+    {
+        ArgumentNullException.ThrowIfNull(identity);
+        var title = ReportFileNameSanitizer.Sanitize(identity.ReportTitle);
+        return $"{title} {range.Start:yyyyMMdd}-{range.End:yyyyMMdd}.xlsx";
+    }
 
     public Task<string> ExportAsync(
         WeekRange range,
@@ -23,12 +25,12 @@ public sealed class ClosedXmlWeeklyReportExporter : IWeeklyReportExporter
         cancellationToken.ThrowIfCancellationRequested();
 
         Directory.CreateDirectory(outputDirectory);
-        var path = Path.Combine(outputDirectory, CreateFileName(range));
+        var path = Path.Combine(outputDirectory, CreateFileName(range, identity));
         using var workbook = new XLWorkbook();
         var sheet = workbook.Worksheets.Add("業務週報");
 
         sheet.Range("A1:C1").Merge();
-        sheet.Cell("A1").Value = $"{ReportName} {range.Start:yyyy/MM/dd}〜{range.End:yyyy/MM/dd}";
+        sheet.Cell("A1").Value = $"{identity.ReportTitle} {range.Start:yyyy/MM/dd}〜{range.End:yyyy/MM/dd}";
         sheet.Cell("D1").Value = $"{identity.CompanyName} / {identity.EmployeeName}";
         sheet.Range("A1:D1").Style.Font.Bold = true;
         sheet.Range("A1:D1").Style.Font.FontSize = 12;
@@ -105,5 +107,23 @@ public sealed class ClosedXmlWeeklyReportExporter : IWeeklyReportExporter
 
         workbook.SaveAs(path);
         return Task.FromResult(path);
+    }
+}
+
+public static class ReportFileNameSanitizer
+{
+    public const string DefaultTitle = "業務週報";
+
+    public static string Sanitize(string? title)
+    {
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            return DefaultTitle;
+        }
+
+        var invalidChars = Path.GetInvalidFileNameChars();
+        var sanitized = new string(
+            title.Select(character => invalidChars.Contains(character) ? '_' : character).ToArray());
+        return sanitized;
     }
 }
