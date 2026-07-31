@@ -1,3 +1,4 @@
+using System.IO;
 using System.Net.Http;
 using WorkLogAI.Core;
 using WorkLogAI.Infrastructure;
