@@ -73,6 +73,29 @@ public sealed class SqliteQuickNoteRepository(SqliteConnectionFactory connection
     public Task<bool> ReopenAsync(Guid id, CancellationToken cancellationToken = default) =>
         SetDeletedAtAsync(id, null, cancellationToken);
 
+    public async Task<bool> UpdateTextAsync(
+        Guid id,
+        string text,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        await using var connection = connectionFactory.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE quick_notes
+            SET text = $text
+            WHERE id = $id;
+            """;
+        command.Parameters.AddWithValue("$id", id.ToString("D"));
+        command.Parameters.AddWithValue("$text", text);
+        return await command.ExecuteNonQueryAsync(cancellationToken) == 1;
+    }
+
     private async Task<bool> SetDeletedAtAsync(
         Guid id,
         string? deletedAt,

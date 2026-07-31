@@ -173,6 +173,117 @@ public sealed class SqliteSourceEventRepository(SqliteConnectionFactory connecti
         return ids;
     }
 
+    public async Task SuppressSourceRefsAsync(
+        IReadOnlyCollection<string> refs,
+        DateTimeOffset suppressedAt,
+        CancellationToken cancellationToken = default)
+    {
+        var distinctRefs = DistinctNonBlank(refs);
+        if (distinctRefs.Length == 0)
+        {
+            return;
+        }
+
+        await using var connection = connectionFactory.Create();
+        await connection.OpenAsync(cancellationToken);
+        var suppressedAtText = Format(suppressedAt);
+        foreach (var sourceRef in distinctRefs)
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                INSERT OR IGNORE INTO suppressed_source_refs (source_ref, suppressed_at)
+                VALUES ($sourceRef, $suppressedAt);
+                """;
+            command.Parameters.AddWithValue("$sourceRef", sourceRef);
+            command.Parameters.AddWithValue("$suppressedAt", suppressedAtText);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+    }
+
+    public async Task<IReadOnlyList<string>> ListSuppressedSourceRefsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var refs = new List<string>();
+        await using var connection = connectionFactory.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT source_ref FROM suppressed_source_refs;";
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            refs.Add(reader.GetString(0));
+        }
+
+        return refs;
+    }
+
+    public async Task UnsuppressSourceRefsAsync(
+        IReadOnlyCollection<string> refs,
+        CancellationToken cancellationToken = default)
+    {
+        var distinctRefs = DistinctNonBlank(refs);
+        if (distinctRefs.Length == 0)
+        {
+            return;
+        }
+
+        await using var connection = connectionFactory.Create();
+        await connection.OpenAsync(cancellationToken);
+        const int chunkSize = 500;
+        foreach (var chunk in distinctRefs.Chunk(chunkSize))
+        {
+            await using var command = connection.CreateCommand();
+            var parameters = chunk.Select((value, index) => (value, name: $"$ref{index}")).ToArray();
+            command.CommandText = $"""
+                DELETE FROM suppressed_source_refs
+                WHERE source_ref IN ({string.Join(",", parameters.Select(item => item.name))});
+                """;
+            foreach (var parameter in parameters)
+            {
+                command.Parameters.AddWithValue(parameter.name, parameter.value);
+            }
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+    }
+
+    public async Task<int> DeleteBySourceRefsAsync(
+        IReadOnlyCollection<string> refs,
+        CancellationToken cancellationToken = default)
+    {
+        var distinctRefs = DistinctNonBlank(refs);
+        if (distinctRefs.Length == 0)
+        {
+            return 0;
+        }
+
+        await using var connection = connectionFactory.Create();
+        await connection.OpenAsync(cancellationToken);
+        var deleted = 0;
+        const int chunkSize = 500;
+        foreach (var chunk in distinctRefs.Chunk(chunkSize))
+        {
+            await using var command = connection.CreateCommand();
+            var parameters = chunk.Select((value, index) => (value, name: $"$ref{index}")).ToArray();
+            command.CommandText = $"""
+                DELETE FROM source_events
+                WHERE source_ref IN ({string.Join(",", parameters.Select(item => item.name))});
+                """;
+            foreach (var parameter in parameters)
+            {
+                command.Parameters.AddWithValue(parameter.name, parameter.value);
+            }
+            deleted += await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        return deleted;
+    }
+
+    private static string[] DistinctNonBlank(IReadOnlyCollection<string> refs) =>
+        refs
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
     private static string Format(DateTimeOffset value) =>
         value.ToString("O", CultureInfo.InvariantCulture);
 

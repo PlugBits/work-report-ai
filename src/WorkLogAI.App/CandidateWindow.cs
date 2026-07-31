@@ -24,6 +24,13 @@ public sealed class CandidateWindow : Window
         Margin = new Thickness(0, 0, 0, 10)
     };
     private readonly List<Guid> _pendingDeletedReviewManualEventIds = [];
+    // "元データごと削除" queues: the backing events are permanently removed and their
+    // source refs suppressed so future collection never revives them; matching quick
+    // notes are soft-deleted too, so the history view matches. All flushed together
+    // in PersistAsync after SaveReviewAsync succeeds.
+    private readonly List<Guid> _pendingSuppressedSourceEventIds = [];
+    private readonly List<string> _pendingSuppressedSourceRefs = [];
+    private readonly List<Guid> _pendingSoftDeletedQuickNoteIds = [];
     private readonly StackPanel _notesList = new();
     private List<CandidateEditor> _items = [];
     private IReadOnlyList<QuickNote> _weekNotes = [];
@@ -438,30 +445,66 @@ public sealed class CandidateWindow : Window
     private async Task DeleteCardAsync(CandidateEditor item)
     {
         var isManual = item.Candidate.Origin == CandidateOrigins.Manual;
-        var message = isManual
-            ? "この行を削除しますか？"
-            : "この行を削除しますか？\nローカル記録やAI生成に由来する行は、次回の収集・生成で再び候補に載ることがあります。";
-        var answer = MessageBox.Show(
-            this,
-            message,
-            "WorkLog AI",
-            MessageBoxButton.YesNo,
-            MessageBoxImage.Question);
-        if (answer != MessageBoxResult.Yes)
+        if (isManual)
+        {
+            // Manual rows added via "1行追加" already delete fully today (their
+            // backing review-manual: event is never re-collectable), so a simple
+            // confirm is enough — no need for the row-only vs. row-and-source choice.
+            var answer = MessageBox.Show(
+                this,
+                "この行を削除しますか？",
+                "WorkLog AI",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question);
+            if (answer != MessageBoxResult.Yes)
+            {
+                return;
+            }
+
+            _items.Remove(item);
+
+            if (item.SourceEventIds.Count > 0)
+            {
+                var backingEvents = await _services.SourceEvents.GetByIdsAsync(item.SourceEventIds);
+                foreach (var sourceEvent in backingEvents)
+                {
+                    if (sourceEvent.SourceRef.StartsWith("review-manual:", StringComparison.Ordinal))
+                    {
+                        _pendingDeletedReviewManualEventIds.Add(sourceEvent.Id);
+                    }
+                }
+            }
+
+            RenderCards();
+            return;
+        }
+
+        var dialog = new DeleteCardConfirmWindow { Owner = this };
+        dialog.ShowDialog();
+        if (dialog.Choice == DeleteCardChoice.Cancel)
         {
             return;
         }
 
         _items.Remove(item);
 
-        if (isManual && item.SourceEventIds.Count > 0)
+        if (dialog.Choice == DeleteCardChoice.RowAndSource && item.SourceEventIds.Count > 0)
         {
             var backingEvents = await _services.SourceEvents.GetByIdsAsync(item.SourceEventIds);
             foreach (var sourceEvent in backingEvents)
             {
-                if (sourceEvent.SourceRef.StartsWith("review-manual:", StringComparison.Ordinal))
+                _pendingSuppressedSourceEventIds.Add(sourceEvent.Id);
+                if (!string.IsNullOrWhiteSpace(sourceEvent.SourceRef))
                 {
-                    _pendingDeletedReviewManualEventIds.Add(sourceEvent.Id);
+                    _pendingSuppressedSourceRefs.Add(sourceEvent.SourceRef);
+                }
+                if (sourceEvent.SourceRef.StartsWith("quick-note:", StringComparison.Ordinal))
+                {
+                    var idText = sourceEvent.SourceRef["quick-note:".Length..];
+                    if (Guid.TryParse(idText, out var noteId))
+                    {
+                        _pendingSoftDeletedQuickNoteIds.Add(noteId);
+                    }
                 }
             }
         }
@@ -574,6 +617,30 @@ public sealed class CandidateWindow : Window
             finally
             {
                 _pendingDeletedReviewManualEventIds.Clear();
+            }
+        }
+        if (_pendingSuppressedSourceEventIds.Count > 0 || _pendingSuppressedSourceRefs.Count > 0)
+        {
+            try
+            {
+                await _services.SourceEvents.DeleteByIdsAsync(_pendingSuppressedSourceEventIds);
+                await _services.SourceEvents.SuppressSourceRefsAsync(
+                    _pendingSuppressedSourceRefs,
+                    DateTimeOffset.Now);
+                foreach (var noteId in _pendingSoftDeletedQuickNoteIds)
+                {
+                    await _services.Notes.SoftDeleteAsync(noteId);
+                }
+            }
+            catch (Exception exception)
+            {
+                ErrorLog.Log("CandidateWindow.SuppressSources", exception);
+            }
+            finally
+            {
+                _pendingSuppressedSourceEventIds.Clear();
+                _pendingSuppressedSourceRefs.Clear();
+                _pendingSoftDeletedQuickNoteIds.Clear();
             }
         }
         _items = candidates.Select((item, index) =>

@@ -19,6 +19,16 @@ public interface IQuickNoteRepository
         CancellationToken cancellationToken = default);
 
     Task<bool> ReopenAsync(Guid id, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Replaces the text of an existing note in place, leaving its id, created_at and
+    /// deleted_at untouched. Rejects blank text (returns <c>false</c> without writing)
+    /// since the underlying column disallows it. Returns <c>false</c> for an unknown id.
+    /// </summary>
+    Task<bool> UpdateTextAsync(
+        Guid id,
+        string text,
+        CancellationToken cancellationToken = default);
 }
 
 public interface ISettingsStore
@@ -53,6 +63,38 @@ public interface ISourceEventRepository
     /// </summary>
     Task<IReadOnlyList<Guid>> ListIdsOlderThanAsync(
         DateTimeOffset cutoff,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Permanently excludes each given non-blank <c>source_ref</c> from ever being
+    /// (re-)stored — collectors that re-read the same underlying data (git history, a
+    /// live quick note) will keep rediscovering it, so deleting the stored row alone is
+    /// not enough. INSERT OR IGNORE: re-suppressing an already-suppressed ref is a no-op.
+    /// </summary>
+    Task SuppressSourceRefsAsync(
+        IReadOnlyCollection<string> refs,
+        DateTimeOffset suppressedAt,
+        CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<string>> ListSuppressedSourceRefsAsync(
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Reverses <see cref="SuppressSourceRefsAsync"/> for the given refs, so a
+    /// collector can rediscover and store them again (used when a soft-deleted quick
+    /// note is reopened).
+    /// </summary>
+    Task UnsuppressSourceRefsAsync(
+        IReadOnlyCollection<string> refs,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Deletes every stored source event whose <c>source_ref</c> matches one of the
+    /// given values. Returns the number of rows deleted; an empty collection is a
+    /// no-op that returns 0.
+    /// </summary>
+    Task<int> DeleteBySourceRefsAsync(
+        IReadOnlyCollection<string> refs,
         CancellationToken cancellationToken = default);
 }
 

@@ -42,6 +42,12 @@ public sealed class LocalCollectionCoordinator(
     {
         var summaries = new List<CollectorRunSummary>();
         var totalInserted = 0;
+        // Loaded once per run: refs a user permanently deleted "元データごと" must
+        // never be re-inserted, and any matching row already sitting in
+        // source_events (deleted anyway, belt and braces) must never reach mapping.
+        var suppressedRefs = new HashSet<string>(
+            await sourceEvents.ListSuppressedSourceRefsAsync(cancellationToken),
+            StringComparer.Ordinal);
 
         foreach (var collector in _collectors)
         {
@@ -69,6 +75,10 @@ public sealed class LocalCollectionCoordinator(
             foreach (var sourceEvent in result.Events)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                if (suppressedRefs.Contains(sourceEvent.SourceRef))
+                {
+                    continue;
+                }
                 if (await sourceEvents.InsertIfNewAsync(sourceEvent, cancellationToken))
                 {
                     inserted++;
@@ -84,7 +94,10 @@ public sealed class LocalCollectionCoordinator(
         }
 
         var weeklyEvents = await sourceEvents.ListAsync(range, cancellationToken);
-        var deduplicated = SourceEventDeduplicator.LatestPerRef(weeklyEvents);
+        var unsuppressedWeeklyEvents = weeklyEvents
+            .Where(sourceEvent => !suppressedRefs.Contains(sourceEvent.SourceRef))
+            .ToArray();
+        var deduplicated = SourceEventDeduplicator.LatestPerRef(unsuppressedWeeklyEvents);
         var mapped = deduplicated.Select(sourceEvent => mapper.Map(sourceEvent, range.Start)).ToArray();
         await candidates.SaveLocalAsync(range.Start, mapped, cancellationToken);
 
