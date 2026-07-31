@@ -334,7 +334,7 @@ public sealed class CandidateWindow : Window
                 _range,
                 rows,
                 settings.ExcelOutputDirectory,
-                new ReportIdentity(settings.CompanyName, settings.EmployeeName));
+                new ReportIdentity(settings.CompanyName, settings.EmployeeName, settings.ReportTitle));
             ExportResultPrompt.OfferToOpen(this, path);
         }
         catch (Exception exception)

@@ -22,15 +22,15 @@ public sealed class ExcelExportTests
             range,
             rows,
             temporary.Path,
-            new ReportIdentity("YAHATA USA", "太田 貴也"));
+            new ReportIdentity("サンプル株式会社", "山田 太郎"));
 
         Assert.Equal(
-            "業務週報(USA太田) 20260727-20260802.xlsx",
+            "業務週報 20260727-20260802.xlsx",
             Path.GetFileName(path));
         using var workbook = new XLWorkbook(path);
         var sheet = workbook.Worksheet("業務週報");
-        Assert.Equal("業務週報(USA太田) 2026/07/27〜2026/08/02", sheet.Cell("A1").GetString());
-        Assert.Equal("YAHATA USA / 太田 貴也", sheet.Cell("D1").GetString());
+        Assert.Equal("業務週報 2026/07/27〜2026/08/02", sheet.Cell("A1").GetString());
+        Assert.Equal("サンプル株式会社 / 山田 太郎", sheet.Cell("D1").GetString());
         Assert.Equal(
             new[] { "日時", "業務項目", "活動内容", "結果・決定事項／今後の課題" },
             sheet.Range("A3:D3").Cells().Select(cell => cell.GetString()).ToArray());
@@ -62,7 +62,7 @@ public sealed class ExcelExportTests
             range,
             rows,
             temporary.Path,
-            new ReportIdentity("YAHATA USA", "太田 貴也"));
+            new ReportIdentity("サンプル株式会社", "山田 太郎"));
 
         using var workbook = new XLWorkbook(path);
         var sheet = workbook.Worksheet("業務週報");
@@ -97,7 +97,7 @@ public sealed class ExcelExportTests
             range,
             rows,
             temporary.Path,
-            new ReportIdentity("YAHATA USA", "太田 貴也"));
+            new ReportIdentity("サンプル株式会社", "山田 太郎"));
 
         using var workbook = new XLWorkbook(path);
         var sheet = workbook.Worksheet("業務週報");
@@ -115,5 +115,56 @@ public sealed class ExcelExportTests
         Assert.False(sheet.Cell("A4").IsMerged());
         Assert.False(sheet.Cell("A5").IsMerged());
         Assert.False(sheet.Cell("A6").IsMerged());
+    }
+
+    [Fact]
+    public async Task Export_uses_custom_report_title_in_file_name_and_title_cell()
+    {
+        using var temporary = new TemporaryDirectory();
+        var exporter = new ClosedXmlWeeklyReportExporter();
+        var range = new WeekRange(new DateOnly(2026, 7, 27), new DateOnly(2026, 8, 2));
+        var rows = new[]
+        {
+            new ReportRow(new DateOnly(2026, 7, 28), "手動メモ", "最初", "")
+        };
+
+        var path = await exporter.ExportAsync(
+            range,
+            rows,
+            temporary.Path,
+            new ReportIdentity("サンプル株式会社", "山田 太郎", "カスタム週報"));
+
+        Assert.Equal(
+            "カスタム週報 20260727-20260802.xlsx",
+            Path.GetFileName(path));
+        using var workbook = new XLWorkbook(path);
+        var sheet = workbook.Worksheet("業務週報");
+        Assert.Equal("カスタム週報 2026/07/27〜2026/08/02", sheet.Cell("A1").GetString());
+    }
+
+    [Theory]
+    [InlineData("業務週報", "業務週報")]
+    [InlineData("  ", "業務週報")]
+    [InlineData("", "業務週報")]
+    [InlineData(null, "業務週報")]
+    [InlineData("報告書/週次/業務", "報告書_週次_業務")]
+    public void ReportFileNameSanitizer_replaces_invalid_characters_and_falls_back_when_blank(
+        string? title,
+        string expected)
+    {
+        Assert.Equal(expected, ReportFileNameSanitizer.Sanitize(title));
+    }
+
+    [Fact]
+    public void CreateFileName_sanitizes_configured_title_for_the_file_system()
+    {
+        var exporter = new ClosedXmlWeeklyReportExporter();
+        var range = new WeekRange(new DateOnly(2026, 7, 27), new DateOnly(2026, 8, 2));
+
+        var fileName = exporter.CreateFileName(
+            range,
+            new ReportIdentity("サンプル株式会社", "山田 太郎", "週報/7/27"));
+
+        Assert.Equal("週報_7_27 20260727-20260802.xlsx", fileName);
     }
 }

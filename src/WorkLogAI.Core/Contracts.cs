@@ -105,7 +105,7 @@ public interface IGraphTokenProvider
 
 public interface IWeeklyReportExporter
 {
-    string CreateFileName(WeekRange range);
+    string CreateFileName(WeekRange range, ReportIdentity identity);
 
     Task<string> ExportAsync(
         WeekRange range,
@@ -124,7 +124,7 @@ public interface IStartupRegistrar
     void Disable();
 }
 
-public sealed record ReportIdentity(string CompanyName, string EmployeeName)
+public sealed record ReportIdentity(string CompanyName, string EmployeeName, string ReportTitle = "業務週報")
 {
-    public static ReportIdentity Default { get; } = new("YAHATA USA", "太田 貴也");
+    public static ReportIdentity Default { get; } = new("会社名", "氏名");
 }

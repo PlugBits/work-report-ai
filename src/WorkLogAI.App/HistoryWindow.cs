@@ -141,7 +141,7 @@ public sealed class HistoryWindow : Window
                 range,
                 notes.Select(mapper.Map),
                 _settings.ExcelOutputDirectory,
-                new ReportIdentity(_settings.CompanyName, _settings.EmployeeName));
+                new ReportIdentity(_settings.CompanyName, _settings.EmployeeName, _settings.ReportTitle));
             ExportResultPrompt.OfferToOpen(this, path);
         }
         catch (Exception exception)

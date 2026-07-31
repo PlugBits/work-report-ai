@@ -155,7 +155,7 @@ public sealed class OpenAiResponsesClientTests
         await new SqliteDatabaseInitializer(factory).InitializeAsync();
         var settings = new AppSettingsService(new SqliteSettingsStore(factory));
         await settings.SaveAsync(new AppSettingsSnapshot(
-            "YAHATA USA", "太田 貴也", DayOfWeek.Monday, temporary.Path,
+            "サンプル株式会社", "山田 太郎", DayOfWeek.Monday, temporary.Path,
             OpenAiModel: "gpt-5.6-sol", SendPreviewEnabled: true));
         var credentials = new FakeCredentialStore();
         await credentials.SetAsync(CredentialTargets.OpenAiApiKey, Secret);

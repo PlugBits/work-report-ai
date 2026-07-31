@@ -4,6 +4,7 @@ public static class AppSettingKeys
 {
     public const string CompanyName = "profile.company_name";
     public const string EmployeeName = "profile.employee_name";
+    public const string ReportTitle = "report.title";
     public const string WeekStartsOn = "report.week_starts_on";
     public const string ExcelOutputDirectory = "report.excel_output_directory";
     public const string HotKey = "capture.hot_key";
@@ -29,6 +30,7 @@ public sealed class AppSettingsService(ISettingsStore store)
             ?? ReportIdentity.Default.CompanyName;
         var employee = await store.GetAsync(AppSettingKeys.EmployeeName, cancellationToken)
             ?? ReportIdentity.Default.EmployeeName;
+        var reportTitleValue = await store.GetAsync(AppSettingKeys.ReportTitle, cancellationToken);
         var weekValue = await store.GetAsync(AppSettingKeys.WeekStartsOn, cancellationToken);
         var output = await store.GetAsync(AppSettingKeys.ExcelOutputDirectory, cancellationToken)
             ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
@@ -50,6 +52,9 @@ public sealed class AppSettingsService(ISettingsStore store)
         var weekStartsOn = Enum.TryParse<DayOfWeek>(weekValue, true, out var parsed)
             ? parsed
             : DayOfWeek.Monday;
+        var reportTitle = string.IsNullOrWhiteSpace(reportTitleValue)
+            ? ReportIdentity.Default.ReportTitle
+            : reportTitleValue.Trim();
         var reminderTime = TimeOnly.TryParseExact(
             reminderTimeValue,
             "HH:mm",
@@ -72,7 +77,8 @@ public sealed class AppSettingsService(ISettingsStore store)
             string.IsNullOrWhiteSpace(graphClientId) ? string.Empty : graphClientId.Trim(),
             string.IsNullOrWhiteSpace(graphTenantId) ? "common" : graphTenantId.Trim(),
             bool.TryParse(graphMailEnabledValue, out var graphMailEnabled) && graphMailEnabled,
-            bool.TryParse(graphCalendarEnabledValue, out var graphCalendarEnabled) && graphCalendarEnabled);
+            bool.TryParse(graphCalendarEnabledValue, out var graphCalendarEnabled) && graphCalendarEnabled,
+            reportTitle);
     }
 
     public async Task SaveAsync(AppSettingsSnapshot settings, CancellationToken cancellationToken = default)
@@ -80,6 +86,7 @@ public sealed class AppSettingsService(ISettingsStore store)
         ArgumentNullException.ThrowIfNull(settings);
         await store.SetAsync(AppSettingKeys.CompanyName, settings.CompanyName, cancellationToken);
         await store.SetAsync(AppSettingKeys.EmployeeName, settings.EmployeeName, cancellationToken);
+        await store.SetAsync(AppSettingKeys.ReportTitle, settings.ReportTitle, cancellationToken);
         await store.SetAsync(AppSettingKeys.WeekStartsOn, settings.WeekStartsOn.ToString(), cancellationToken);
         await store.SetAsync(
             AppSettingKeys.ExcelOutputDirectory,
@@ -154,7 +161,8 @@ public sealed record AppSettingsSnapshot(
     string GraphClientId = "",
     string GraphTenantId = "common",
     bool GraphMailEnabled = false,
-    bool GraphCalendarEnabled = false)
+    bool GraphCalendarEnabled = false,
+    string ReportTitle = "業務週報")
 {
     public static TimeOnly DefaultReminderTime { get; } = new(17, 0);
 
