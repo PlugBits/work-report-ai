@@ -5,6 +5,8 @@ namespace WorkLogAI.Infrastructure;
 
 public sealed class ClosedXmlWeeklyReportExporter : IWeeklyReportExporter
 {
+    private static readonly XLColor HeaderFillColor = XLColor.FromHtml("#2E74B5");
+
     public string CreateFileName(WeekRange range, ReportIdentity identity)
     {
         ArgumentNullException.ThrowIfNull(identity);
@@ -31,72 +33,78 @@ public sealed class ClosedXmlWeeklyReportExporter : IWeeklyReportExporter
 
         sheet.Range("A1:C1").Merge();
         sheet.Cell("A1").Value = $"{identity.ReportTitle} {range.Start:yyyy/MM/dd}〜{range.End:yyyy/MM/dd}";
-        sheet.Cell("D1").Value = $"{identity.CompanyName} / {identity.EmployeeName}";
-        sheet.Range("A1:D1").Style.Font.Bold = true;
-        sheet.Range("A1:D1").Style.Font.FontSize = 12;
+        sheet.Cell("D1").Value = identity.CompanyName;
+        sheet.Cell("D2").Value = identity.EmployeeName;
+        sheet.Range("A1:D2").Style.Font.Bold = true;
+        sheet.Range("A1:D2").Style.Font.FontSize = 12;
+        sheet.Range("D1:D2").Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Left;
 
         var headers = new[]
         {
             "日時",
-            "業務項目",
+            "項目/案件・目標金額",
             "活動内容",
-            "結果・決定事項／今後の課題"
+            "結果・決定事項/今後の課題"
         };
         for (var column = 1; column <= headers.Length; column++)
         {
             sheet.Cell(3, column).Value = headers[column - 1];
         }
 
-        sheet.Range("A3:D3").Style.Font.Bold = true;
-        sheet.Range("A3:D3").Style.Fill.BackgroundColor = XLColor.LightGray;
+        var headerRange = sheet.Range("A3:D3");
+        headerRange.Style.Font.Bold = true;
+        headerRange.Style.Font.FontColor = XLColor.White;
+        headerRange.Style.Fill.BackgroundColor = HeaderFillColor;
+        headerRange.Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
+        headerRange.Style.Border.InsideBorder = XLBorderStyleValues.Thin;
 
-        var orderedRows = rows.OrderBy(row => row.Date).ToList();
+        var dailyRows = DailyReportGrouper.Group(rows.OrderBy(row => row.Date));
+
+        var employeeName = identity.EmployeeName?.Trim() ?? string.Empty;
+        var surname = string.IsNullOrWhiteSpace(employeeName)
+            ? null
+            : employeeName.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+
         var rowNumber = 4;
-        foreach (var row in orderedRows)
+        foreach (var day in dailyRows)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            sheet.Cell(rowNumber, 1).Value = row.Date.ToDateTime(TimeOnly.MinValue);
-            sheet.Cell(rowNumber, 1).Style.DateFormat.Format = "yyyy/MM/dd";
-            sheet.Cell(rowNumber, 2).Value = row.WorkItem;
-            sheet.Cell(rowNumber, 3).Value = row.Activity;
-            sheet.Cell(rowNumber, 4).Value = row.ResultOrNext;
+
+            var dateLines = new List<string> { "社内", day.Date.ToString("yyyy/MM/dd") };
+            if (!string.IsNullOrEmpty(surname))
+            {
+                dateLines.Add(surname);
+            }
+
+            sheet.Cell(rowNumber, 1).Value = string.Join("\n", dateLines);
+
+            var workItemLines = day.Items
+                .Select(item => $"{DailyReportGrouper.CircledNumber(item.Number)} {item.WorkItem}");
+            sheet.Cell(rowNumber, 2).Value = string.Join("\n", workItemLines);
+
+            var activityLines = day.Items
+                .Select(item => $"{DailyReportGrouper.CircledNumber(item.Number)} {item.Activity}");
+            sheet.Cell(rowNumber, 3).Value = string.Join("\n", activityLines);
+
+            var resultLines = day.Items
+                .Where(item => !string.IsNullOrWhiteSpace(item.ResultOrNext))
+                .Select(item => $"{DailyReportGrouper.CircledNumber(item.Number)} {item.ResultOrNext}");
+            sheet.Cell(rowNumber, 4).Value = string.Join("\n", resultLines);
+
             rowNumber++;
         }
 
         var lastRow = Math.Max(3, rowNumber - 1);
-
-        // Vertically merge the 日時 (date) cell across consecutive rows sharing the
-        // same date. Must happen before border styling below so the merged block's
-        // inside/outside thin borders render correctly around the merged region.
-        var runStartRow = 4;
-        for (var index = 1; index < orderedRows.Count; index++)
-        {
-            var currentRow = 4 + index;
-            if (orderedRows[index].Date != orderedRows[index - 1].Date)
-            {
-                if (currentRow - 1 > runStartRow)
-                {
-                    sheet.Range(runStartRow, 1, currentRow - 1, 1).Merge();
-                }
-
-                runStartRow = currentRow;
-            }
-        }
-
-        if (orderedRows.Count > 0 && lastRow > runStartRow)
-        {
-            sheet.Range(runStartRow, 1, lastRow, 1).Merge();
-        }
 
         var reportRange = sheet.Range(3, 1, lastRow, 4);
         sheet.Range(1, 1, lastRow, 4).Style.Alignment.WrapText = true;
         reportRange.Style.Alignment.Vertical = XLAlignmentVerticalValues.Top;
         reportRange.Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
         reportRange.Style.Border.InsideBorder = XLBorderStyleValues.Thin;
-        sheet.Column(1).Width = 13;
-        sheet.Column(2).Width = 22;
-        sheet.Column(3).Width = 48;
-        sheet.Column(4).Width = 48;
+        sheet.Column(1).Width = 12;
+        sheet.Column(2).Width = 26;
+        sheet.Column(3).Width = 46;
+        sheet.Column(4).Width = 42;
         sheet.Rows(1, lastRow).AdjustToContents();
 
         sheet.PageSetup.PageOrientation = XLPageOrientation.Landscape;

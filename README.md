@@ -291,8 +291,19 @@ The paths are injectable for tests and future hosting.
    Phase 1 report (also offers to open the file after export).
 
 The generated file is named
-`業務週報 YYYYMMDD-YYYYMMDD.xlsx`. The title (and the company/employee
-name shown alongside it) are configurable in **設定**.
+`業務週報 YYYYMMDD-YYYYMMDD.xlsx` and matches the layout of the user's real
+submitted weekly report: a title row (A1:C1) plus the company name (D1) and
+employee name (D2) stacked in their own cells, a blue-filled white-bold header
+row with the captions 日時/項目・案件・目標金額/活動内容/結果・決定事項・今後の課題,
+and **one row per calendar day** (only days with at least one selected item).
+Each day's 日時 cell holds three stacked lines — the fixed literal `社内`, the
+date (`yyyy/MM/dd`), and the employee's surname (the first token of the
+configured employee name, omitted if the name is blank). Multiple items on the
+same day are numbered with circled digits (①②③…, falling back to `(21)`,
+`(22)`, … past ①-⑳) so the 項目, 活動内容, and 結果・決定事項 columns line up by
+number; a day's 結果・決定事項 cell lists only the numbered items whose result
+text is non-blank. The title (and the company/employee name shown alongside
+it) are configurable in **設定**.
 
 ## Security
 
