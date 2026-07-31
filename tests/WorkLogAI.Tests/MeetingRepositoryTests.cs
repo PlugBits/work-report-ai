@@ -137,6 +137,99 @@ public sealed class MeetingRepositoryTests
         Assert.Equal(4, fourth.LineNo);
     }
 
+    [Fact]
+    public async Task Save_summary_inserts_a_row_and_marks_the_session_formatted()
+    {
+        using var temporary = new TemporaryDirectory();
+        var factory = await CreateDatabaseAsync(temporary, "save-summary.db");
+        var repository = new SqliteMeetingRepository(factory);
+        var session = await repository.CreateSessionAsync("会議", "", MeetingKind.Meeting, DateTimeOffset.Now);
+
+        await repository.SaveSummaryAsync(session.Id, """{"summaryLine":"要約"}""", "要約");
+
+        var updated = await repository.GetSessionAsync(session.Id);
+        Assert.Equal(MeetingStatus.Formatted, updated!.Status);
+
+        var summary = await repository.GetLatestSummaryAsync(session.Id);
+        Assert.NotNull(summary);
+        Assert.Equal(session.Id, summary!.SessionId);
+        Assert.Equal("要約", summary.SummaryLine);
+        Assert.Equal("""{"summaryLine":"要約"}""", summary.FormattedJson);
+    }
+
+    [Fact]
+    public async Task Get_latest_summary_returns_null_when_none_exists()
+    {
+        using var temporary = new TemporaryDirectory();
+        var factory = await CreateDatabaseAsync(temporary, "no-summary.db");
+        var repository = new SqliteMeetingRepository(factory);
+        var session = await repository.CreateSessionAsync("会議", "", MeetingKind.Meeting, DateTimeOffset.Now);
+
+        Assert.Null(await repository.GetLatestSummaryAsync(session.Id));
+    }
+
+    [Fact]
+    public async Task Save_summary_twice_keeps_both_rows_and_latest_returns_the_newest()
+    {
+        using var temporary = new TemporaryDirectory();
+        var factory = await CreateDatabaseAsync(temporary, "resave-summary.db");
+        var repository = new SqliteMeetingRepository(factory);
+        var session = await repository.CreateSessionAsync("会議", "", MeetingKind.Meeting, DateTimeOffset.Now);
+
+        await repository.SaveSummaryAsync(session.Id, """{"v":1}""", "最初の要約");
+        await Task.Delay(10);
+        await repository.SaveSummaryAsync(session.Id, """{"v":2}""", "最新の要約");
+
+        var latest = await repository.GetLatestSummaryAsync(session.Id);
+        Assert.Equal("最新の要約", latest!.SummaryLine);
+    }
+
+    [Fact]
+    public async Task List_formatted_in_range_returns_only_formatted_sessions_within_the_week_with_latest_summary()
+    {
+        using var temporary = new TemporaryDirectory();
+        var factory = await CreateDatabaseAsync(temporary, "list-formatted.db");
+        var repository = new SqliteMeetingRepository(factory);
+        var range = new WeekRange(new DateOnly(2026, 7, 27), new DateOnly(2026, 8, 2));
+
+        var inRangeFormatted = await repository.CreateSessionAsync(
+            "週内・整形済み", "", MeetingKind.Meeting,
+            new DateTimeOffset(2026, 7, 29, 9, 0, 0, TimeSpan.FromHours(9)));
+        await repository.SaveSummaryAsync(inRangeFormatted.Id, """{"v":1}""", "古い要約");
+        await Task.Delay(10);
+        await repository.SaveSummaryAsync(inRangeFormatted.Id, """{"v":2}""", "新しい要約");
+
+        var inRangeDraft = await repository.CreateSessionAsync(
+            "週内・下書き", "", MeetingKind.Meeting,
+            new DateTimeOffset(2026, 7, 30, 9, 0, 0, TimeSpan.FromHours(9)));
+
+        var outOfRangeFormatted = await repository.CreateSessionAsync(
+            "週外・整形済み", "", MeetingKind.Meeting,
+            new DateTimeOffset(2026, 8, 10, 9, 0, 0, TimeSpan.FromHours(9)));
+        await repository.SaveSummaryAsync(outOfRangeFormatted.Id, """{"v":1}""", "週外の要約");
+
+        var results = await repository.ListFormattedInRangeAsync(range);
+
+        var pair = Assert.Single(results);
+        Assert.Equal(inRangeFormatted.Id, pair.Session.Id);
+        Assert.Equal("新しい要約", pair.Summary.SummaryLine);
+        Assert.DoesNotContain(results, item => item.Session.Id == inRangeDraft.Id);
+        Assert.DoesNotContain(results, item => item.Session.Id == outOfRangeFormatted.Id);
+    }
+
+    [Fact]
+    public async Task List_formatted_in_range_is_empty_when_no_sessions_exist()
+    {
+        using var temporary = new TemporaryDirectory();
+        var factory = await CreateDatabaseAsync(temporary, "list-formatted-empty.db");
+        var repository = new SqliteMeetingRepository(factory);
+
+        var results = await repository.ListFormattedInRangeAsync(
+            new WeekRange(new DateOnly(2026, 7, 27), new DateOnly(2026, 8, 2)));
+
+        Assert.Empty(results);
+    }
+
     private static async Task<SqliteConnectionFactory> CreateDatabaseAsync(
         TemporaryDirectory temporary,
         string name)

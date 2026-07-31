@@ -1,3 +1,6 @@
+using System.Globalization;
+using System.Text.Json;
+
 namespace WorkLogAI.Core;
 
 public enum MeetingKind
@@ -107,6 +110,56 @@ public sealed record MeetingLine(
     MeetingMarker Marker,
     string Text,
     DateTimeOffset LoggedAt);
+
+/// <summary>One AI-formatting run persisted for a session. A session can accumulate
+/// several rows over time (re-formatting after edits); callers that need "the"
+/// summary use <see cref="IMeetingRepository.GetLatestSummaryAsync"/>.</summary>
+public sealed record MeetingSummary(
+    Guid Id,
+    Guid SessionId,
+    string FormattedJson,
+    string SummaryLine,
+    DateTimeOffset CreatedAt);
+
+/// <summary>
+/// Shared "HH:mm [宿題|決定|] text" rendering used by the raw log section, the
+/// meeting capture list, and the mandatory AI-send preview so all three agree on
+/// what a line looks like.
+/// </summary>
+public static class MeetingLineFormatter
+{
+    public static string BadgeLabel(MeetingMarker marker) => marker switch
+    {
+        MeetingMarker.Todo => "[宿題]",
+        MeetingMarker.Decision => "[決定]",
+        _ => string.Empty
+    };
+
+    public static string Compose(DateTimeOffset loggedAt, MeetingMarker marker, string text)
+    {
+        var time = loggedAt.ToString("HH:mm", CultureInfo.InvariantCulture);
+        var badge = BadgeLabel(marker);
+        return badge.Length == 0 ? $"{time} {text}" : $"{time} {badge} {text}";
+    }
+
+    public static string FormatWithTime(MeetingLine line) => Compose(line.LoggedAt, line.Marker, line.Text);
+}
+
+/// <summary>
+/// The single, explicit round-trip contract for persisting/reloading a
+/// <see cref="MeetingFormattedResult"/> as the meeting_summaries.formatted_json
+/// column. camelCase, case-insensitive on read.
+/// </summary>
+public static class MeetingFormattedResultJson
+{
+    public static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web);
+
+    public static string Serialize(MeetingFormattedResult result) =>
+        JsonSerializer.Serialize(result, Options);
+
+    public static MeetingFormattedResult? Deserialize(string json) =>
+        JsonSerializer.Deserialize<MeetingFormattedResult>(json, Options);
+}
 
 /// <summary>
 /// Pure marker parsing for a single raw line of meeting input. No IO, no repository

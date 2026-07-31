@@ -80,6 +80,27 @@ public sealed class Phase2PersistenceTests
     }
 
     [Fact]
+    public void Local_mapping_treats_a_formatted_meeting_as_completed_and_pre_selected()
+    {
+        var source = SourceEventFactory.Create(
+            new DateTimeOffset(2026, 7, 30, 10, 0, 0, TimeSpan.FromHours(9)),
+            SourceTypes.Meeting,
+            "定例会議",
+            "定例会議で来期予算を承認し資料送付を宿題とした。",
+            "2026-07-30 10:00 定例会議",
+            "meeting:11111111-1111-1111-1111-111111111111",
+            .8);
+
+        var candidate = new LocalSourceEventMapper().Map(source, new DateOnly(2026, 7, 27));
+
+        Assert.Equal("会議・打合せ", candidate.WorkItem);
+        Assert.Equal("completed", candidate.Status);
+        Assert.True(candidate.Selected);
+        Assert.Equal(source.Body, candidate.Activity);
+        Assert.Equal([source.Id], candidate.SourceEventIds);
+    }
+
+    [Fact]
     public async Task Candidate_replace_is_transactional_and_idempotent_with_json_evidence()
     {
         using var temporary = new TemporaryDirectory();

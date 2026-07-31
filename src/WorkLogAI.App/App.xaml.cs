@@ -209,11 +209,7 @@ public partial class App : System.Windows.Application
 
             Dispatcher.Invoke(() =>
             {
-                var window = new MeetingCaptureWindow(
-                    _services.Meetings,
-                    _services.SettingsStore,
-                    _services.Settings,
-                    session);
+                var window = new MeetingCaptureWindow(_services, session);
                 window.Show();
                 window.Activate();
             });

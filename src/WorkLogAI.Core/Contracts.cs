@@ -130,6 +130,28 @@ public interface IMeetingRepository
     Task<IReadOnlyList<MeetingLine>> ListLinesAsync(
         Guid sessionId,
         CancellationToken cancellationToken = default);
+
+    /// <summary>Inserts a new summary row and sets the session's status to
+    /// <see cref="MeetingStatus.Formatted"/>. Prior summary rows for the session are
+    /// kept (not overwritten) — <see cref="GetLatestSummaryAsync"/> returns the
+    /// newest one.</summary>
+    Task SaveSummaryAsync(
+        Guid sessionId,
+        string formattedJson,
+        string summaryLine,
+        CancellationToken cancellationToken = default);
+
+    Task<MeetingSummary?> GetLatestSummaryAsync(
+        Guid sessionId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Sessions whose started_at falls within range and whose status is
+    /// <see cref="MeetingStatus.Formatted"/>, each paired with its latest summary.
+    /// Used by MeetingSummaryCollector — only this pairing (never raw lines) may
+    /// reach the weekly AI generation pipeline.</summary>
+    Task<IReadOnlyList<(MeetingSession Session, MeetingSummary Summary)>> ListFormattedInRangeAsync(
+        WeekRange range,
+        CancellationToken cancellationToken = default);
 }
 
 public interface ICredentialStore

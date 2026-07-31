@@ -229,6 +229,113 @@ public sealed class SqliteMeetingRepository(SqliteConnectionFactory connectionFa
         return lines;
     }
 
+    public async Task SaveSummaryAsync(
+        Guid sessionId,
+        string formattedJson,
+        string summaryLine,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(formattedJson);
+        ArgumentException.ThrowIfNullOrWhiteSpace(summaryLine);
+
+        await using var connection = connectionFactory.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+
+        await using (var insert = connection.CreateCommand())
+        {
+            insert.Transaction = (SqliteTransaction)transaction;
+            insert.CommandText = """
+                INSERT INTO meeting_summaries (id, session_id, formatted_json, summary_line, created_at)
+                VALUES ($id, $sessionId, $formattedJson, $summaryLine, $createdAt);
+                """;
+            insert.Parameters.AddWithValue("$id", Guid.NewGuid().ToString("D"));
+            insert.Parameters.AddWithValue("$sessionId", sessionId.ToString("D"));
+            insert.Parameters.AddWithValue("$formattedJson", formattedJson);
+            insert.Parameters.AddWithValue("$summaryLine", summaryLine.Trim());
+            insert.Parameters.AddWithValue("$createdAt", FormatTimestamp(DateTimeOffset.Now));
+            await insert.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await using (var update = connection.CreateCommand())
+        {
+            update.Transaction = (SqliteTransaction)transaction;
+            update.CommandText = "UPDATE meeting_sessions SET status = $status WHERE id = $id;";
+            update.Parameters.AddWithValue("$status", MeetingStatusStrings.ToStorageString(MeetingStatus.Formatted));
+            update.Parameters.AddWithValue("$id", sessionId.ToString("D"));
+            await update.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    public async Task<MeetingSummary?> GetLatestSummaryAsync(
+        Guid sessionId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = connectionFactory.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT id, session_id, formatted_json, summary_line, created_at
+            FROM meeting_summaries
+            WHERE session_id = $sessionId
+            ORDER BY julianday(created_at) DESC, id DESC
+            LIMIT 1;
+            """;
+        command.Parameters.AddWithValue("$sessionId", sessionId.ToString("D"));
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken) ? ReadSummary(reader) : null;
+    }
+
+    public async Task<IReadOnlyList<(MeetingSession Session, MeetingSummary Summary)>> ListFormattedInRangeAsync(
+        WeekRange range,
+        CancellationToken cancellationToken = default)
+    {
+        var results = new List<(MeetingSession, MeetingSummary)>();
+        await using var connection = connectionFactory.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT s.id, s.title, s.participants, s.kind, s.started_at, s.ended_at, s.status, s.created_at,
+                   m.id, m.session_id, m.formatted_json, m.summary_line, m.created_at
+            FROM meeting_sessions s
+            JOIN meeting_summaries m ON m.session_id = s.id
+            WHERE s.status = $status
+              AND substr(s.started_at, 1, 10) >= $start
+              AND substr(s.started_at, 1, 10) <= $end
+              AND m.created_at = (
+                  SELECT MAX(m2.created_at) FROM meeting_summaries m2 WHERE m2.session_id = s.id
+              )
+            ORDER BY s.started_at, s.id;
+            """;
+        command.Parameters.AddWithValue("$status", MeetingStatusStrings.ToStorageString(MeetingStatus.Formatted));
+        command.Parameters.AddWithValue("$start", range.Start.ToString("yyyy-MM-dd"));
+        command.Parameters.AddWithValue("$end", range.End.ToString("yyyy-MM-dd"));
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var session = ReadSession(reader);
+            var summary = new MeetingSummary(
+                Guid.Parse(reader.GetString(8)),
+                Guid.Parse(reader.GetString(9)),
+                reader.GetString(10),
+                reader.GetString(11),
+                DateTimeOffset.Parse(reader.GetString(12), CultureInfo.InvariantCulture));
+            results.Add((session, summary));
+        }
+
+        return results;
+    }
+
+    private static MeetingSummary ReadSummary(SqliteDataReader reader) => new(
+        Guid.Parse(reader.GetString(0)),
+        Guid.Parse(reader.GetString(1)),
+        reader.GetString(2),
+        reader.GetString(3),
+        DateTimeOffset.Parse(reader.GetString(4), CultureInfo.InvariantCulture));
+
     private static async Task<int> GetNextLineNoAsync(
         SqliteConnection connection,
         System.Data.Common.DbTransaction transaction,

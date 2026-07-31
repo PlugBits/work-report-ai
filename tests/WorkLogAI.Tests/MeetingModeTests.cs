@@ -78,6 +78,97 @@ public sealed class MeetingParticipantsFormatterTests
     }
 }
 
+public sealed class MeetingLineFormatterTests
+{
+    private static MeetingLine Line(MeetingMarker marker, string text, int hour, int minute) => new(
+        Guid.NewGuid(),
+        Guid.NewGuid(),
+        1,
+        marker,
+        text,
+        new DateTimeOffset(2026, 7, 31, hour, minute, 0, TimeSpan.FromHours(9)));
+
+    [Theory]
+    [InlineData(MeetingMarker.None, "")]
+    [InlineData(MeetingMarker.Todo, "[宿題]")]
+    [InlineData(MeetingMarker.Decision, "[決定]")]
+    public void Badge_label_matches_marker(MeetingMarker marker, string expected)
+    {
+        Assert.Equal(expected, MeetingLineFormatter.BadgeLabel(marker));
+    }
+
+    [Fact]
+    public void Format_with_time_omits_badge_for_unmarked_lines()
+    {
+        var formatted = MeetingLineFormatter.FormatWithTime(Line(MeetingMarker.None, "hello", 9, 5));
+
+        Assert.Equal("09:05 hello", formatted);
+    }
+
+    [Fact]
+    public void Format_with_time_includes_badge_for_todo_and_decision_lines()
+    {
+        Assert.Equal(
+            "09:05 [宿題] buy milk",
+            MeetingLineFormatter.FormatWithTime(Line(MeetingMarker.Todo, "buy milk", 9, 5)));
+        Assert.Equal(
+            "09:10 [決定] approved",
+            MeetingLineFormatter.FormatWithTime(Line(MeetingMarker.Decision, "approved", 9, 10)));
+    }
+}
+
+public sealed class MeetingFormattedResultJsonTests
+{
+    [Fact]
+    public void Serialize_then_deserialize_round_trips_all_fields()
+    {
+        var result = new MeetingFormattedResult(
+            "定例会議の要約",
+            "予算について議論した。",
+            ["来期予算を承認"],
+            [new MeetingActionItem("資料を送付", "田中", "2026-08-05")],
+            [new MeetingTopic("予算", "来期の予算配分について")]);
+
+        var json = MeetingFormattedResultJson.Serialize(result);
+        var roundTripped = MeetingFormattedResultJson.Deserialize(json);
+
+        Assert.NotNull(roundTripped);
+        Assert.Equal(result.SummaryLine, roundTripped!.SummaryLine);
+        Assert.Equal(result.Overview, roundTripped.Overview);
+        Assert.Equal(result.Decisions, roundTripped.Decisions);
+        Assert.Equal(result.ActionItems, roundTripped.ActionItems);
+        Assert.Equal(result.Topics, roundTripped.Topics);
+    }
+
+    [Fact]
+    public void Serialized_json_uses_camel_case_property_names()
+    {
+        var result = new MeetingFormattedResult("summary", "overview", [], [], []);
+
+        var json = MeetingFormattedResultJson.Serialize(result);
+
+        Assert.Contains("\"summaryLine\"", json);
+        Assert.Contains("\"actionItems\"", json);
+    }
+
+    [Fact]
+    public void Deserialize_handles_null_owner_and_due()
+    {
+        var result = new MeetingFormattedResult(
+            "summary",
+            "overview",
+            [],
+            [new MeetingActionItem("宿題", null, null)],
+            []);
+
+        var roundTripped = MeetingFormattedResultJson.Deserialize(MeetingFormattedResultJson.Serialize(result));
+
+        var item = Assert.Single(roundTripped!.ActionItems);
+        Assert.Null(item.Owner);
+        Assert.Null(item.Due);
+    }
+}
+
 public sealed class MeetingMarkdownBuilderTests
 {
     private static MeetingSession Session(

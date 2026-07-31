@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using System.Windows.Input;
 using WorkLogAI.Core;
 using WorkLogAI.Infrastructure;
@@ -17,9 +18,9 @@ namespace WorkLogAI.App;
 /// <summary>
 /// 議事録モード capture window. Lines are persisted through <see cref="IMeetingRepository"/>
 /// immediately on Enter — there is no separate "save" step. Closing the window (X)
-/// leaves the session as a draft; 会議終了 closes it and optionally exports a
-/// Markdown file (raw log only — AI formatting is out of scope for this phase, see
-/// MeetingMarkdownBuilder's formatted:null path).
+/// leaves the session as a draft; 会議終了 closes it and, when an API key is
+/// configured, offers AI整形 (see <see cref="RunAiFormatFlowAsync"/>) before falling
+/// back to a raw-log-only Markdown export.
 /// </summary>
 public sealed class MeetingCaptureWindow : Window
 {
@@ -30,9 +31,7 @@ public sealed class MeetingCaptureWindow : Window
         ("電話", MeetingKind.Call)
     ];
 
-    private readonly IMeetingRepository _meetings;
-    private readonly ISettingsStore _settingsStore;
-    private readonly AppSettingsService _settings;
+    private readonly AppServices _services;
     private readonly MeetingSession? _initialSession;
 
     private readonly TextBox _titleBox = new();
@@ -40,6 +39,13 @@ public sealed class MeetingCaptureWindow : Window
     private readonly ComboBox _kindBox = new();
     private readonly ListBox _lines = new() { DisplayMemberPath = nameof(LineItem.Label) };
     private readonly TextBox _input = new() { FontSize = 14, AcceptsReturn = false, MaxLines = 1 };
+    private readonly Button _aiFormatButton = new()
+    {
+        Content = "AI整形",
+        Padding = new Thickness(14, 6, 14, 6),
+        Margin = new Thickness(0, 0, 8, 0),
+        IsEnabled = false
+    };
     private readonly Button _endButton = new() { Content = "会議終了", Padding = new Thickness(14, 6, 14, 6) };
 
     private Guid? _sessionId;
@@ -47,15 +53,9 @@ public sealed class MeetingCaptureWindow : Window
     private bool _closeArmed;
     private bool _savingLine;
 
-    public MeetingCaptureWindow(
-        IMeetingRepository meetings,
-        ISettingsStore settingsStore,
-        AppSettingsService settings,
-        MeetingSession? existingSession)
+    public MeetingCaptureWindow(AppServices services, MeetingSession? existingSession)
     {
-        _meetings = meetings;
-        _settingsStore = settingsStore;
-        _settings = settings;
+        _services = services;
         _initialSession = existingSession;
 
         Title = "議事録モード - WorkLog AI";
@@ -84,6 +84,8 @@ public sealed class MeetingCaptureWindow : Window
             HorizontalAlignment = HorizontalAlignment.Right,
             Margin = new Thickness(0, 8, 0, 0)
         };
+        _aiFormatButton.Click += AiFormatButtonClick;
+        endRow.Children.Add(_aiFormatButton);
         _endButton.Click += EndMeetingAsync;
         endRow.Children.Add(_endButton);
         header.Children.Add(endRow);
@@ -136,7 +138,7 @@ public sealed class MeetingCaptureWindow : Window
         {
             try
             {
-                var created = await _meetings.CreateSessionAsync(
+                var created = await _services.Meetings.CreateSessionAsync(
                     string.Empty,
                     string.Empty,
                     MeetingKind.Meeting,
@@ -164,7 +166,7 @@ public sealed class MeetingCaptureWindow : Window
     {
         try
         {
-            return await _settingsStore.GetAsync(AppSettingKeys.MeetingWindowPlacement);
+            return await _services.SettingsStore.GetAsync(AppSettingKeys.MeetingWindowPlacement);
         }
         catch (Exception exception)
         {
@@ -202,8 +204,9 @@ public sealed class MeetingCaptureWindow : Window
             return;
         }
 
-        var lines = await _meetings.ListLinesAsync(id);
+        var lines = await _services.Meetings.ListLinesAsync(id);
         _lines.ItemsSource = lines.Select(line => new LineItem(line)).ToList();
+        _aiFormatButton.IsEnabled = lines.Count > 0;
     }
 
     private async void OnInputPreviewKeyDown(object sender, KeyEventArgs e)
@@ -224,7 +227,7 @@ public sealed class MeetingCaptureWindow : Window
         _savingLine = true;
         try
         {
-            await _meetings.AddLineAsync(id, parsed.Value.Marker, parsed.Value.Text, DateTimeOffset.Now);
+            await _services.Meetings.AddLineAsync(id, parsed.Value.Marker, parsed.Value.Text, DateTimeOffset.Now);
             _input.Clear();
             await RefreshLinesAsync();
         }
@@ -267,7 +270,7 @@ public sealed class MeetingCaptureWindow : Window
 
         try
         {
-            await _meetings.UpdateLineAsync(item.Line.Id, parsed.Value.Marker, parsed.Value.Text);
+            await _services.Meetings.UpdateLineAsync(item.Line.Id, parsed.Value.Marker, parsed.Value.Text);
             await RefreshLinesAsync();
         }
         catch (Exception exception)
@@ -303,7 +306,7 @@ public sealed class MeetingCaptureWindow : Window
 
         try
         {
-            await _meetings.DeleteLineAsync(item.Line.Id);
+            await _services.Meetings.DeleteLineAsync(item.Line.Id);
             await RefreshLinesAsync();
         }
         catch (Exception exception)
@@ -332,9 +335,10 @@ public sealed class MeetingCaptureWindow : Window
         }
 
         _endButton.IsEnabled = false;
+        _aiFormatButton.IsEnabled = false;
         try
         {
-            await _meetings.UpdateSessionAsync(
+            await _services.Meetings.UpdateSessionAsync(
                 id,
                 _titleBox.Text.Trim(),
                 _participantsBox.Text.Trim(),
@@ -343,7 +347,7 @@ public sealed class MeetingCaptureWindow : Window
                 DateTimeOffset.Now);
             _ended = true;
 
-            await OfferMarkdownExportAsync(id);
+            await OfferAiFormatOrRawExportAsync(id);
 
             Close();
         }
@@ -357,12 +361,45 @@ public sealed class MeetingCaptureWindow : Window
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
             _endButton.IsEnabled = true;
+            _aiFormatButton.IsEnabled = _lines.Items.Count > 0;
         }
     }
 
-    private async Task OfferMarkdownExportAsync(Guid sessionId)
+    /// <summary>Called right after 会議終了 persists the session as closed. When an
+    /// API key is configured, asks once whether to run the exact same AI整形 flow as
+    /// the button (<see cref="RunAiFormatFlowAsync"/>); declining, or having no API
+    /// key at all, falls back to the raw-log-only export offered in part 1.</summary>
+    private async Task OfferAiFormatOrRawExportAsync(Guid sessionId)
     {
-        var settings = await _settings.LoadAsync();
+        var lines = await _services.Meetings.ListLinesAsync(sessionId);
+        if (lines.Count == 0)
+        {
+            return;
+        }
+
+        var hasCredential = !string.IsNullOrWhiteSpace(
+            await _services.Credentials.GetAsync(CredentialTargets.OpenAiApiKey));
+        if (hasCredential)
+        {
+            var answer = MessageBox.Show(
+                this,
+                "AI整形しますか？",
+                "WorkLog AI",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question);
+            if (answer == MessageBoxResult.Yes)
+            {
+                await RunAiFormatFlowAsync();
+                return;
+            }
+        }
+
+        await OfferRawMarkdownExportAsync(sessionId);
+    }
+
+    private async Task OfferRawMarkdownExportAsync(Guid sessionId)
+    {
+        var settings = await _services.Settings.LoadAsync();
         if (string.IsNullOrWhiteSpace(settings.MeetingOutputFolder))
         {
             MessageBox.Show(this, "議事録出力フォルダ未設定（書き出しスキップ）。", "WorkLog AI");
@@ -382,8 +419,8 @@ public sealed class MeetingCaptureWindow : Window
 
         try
         {
-            var lines = await _meetings.ListLinesAsync(sessionId);
-            var session = await _meetings.GetSessionAsync(sessionId)
+            var lines = await _services.Meetings.ListLinesAsync(sessionId);
+            var session = await _services.Meetings.GetSessionAsync(sessionId)
                 ?? throw new InvalidOperationException("セッションが見つかりません。");
             var markdown = MeetingMarkdownBuilder.Build(session, lines, null, settings.MeetingIncludeRawLog);
             var path = new MeetingMarkdownWriter().Write(
@@ -405,6 +442,155 @@ public sealed class MeetingCaptureWindow : Window
         }
     }
 
+    private async void AiFormatButtonClick(object sender, RoutedEventArgs e)
+    {
+        _aiFormatButton.IsEnabled = false;
+        try
+        {
+            await RunAiFormatFlowAsync();
+        }
+        finally
+        {
+            _aiFormatButton.IsEnabled = _lines.Items.Count > 0;
+        }
+    }
+
+    /// <summary>
+    /// The one AI整形 flow, reused verbatim by both the AI整形 button and 会議終了's
+    /// follow-up prompt: check for an API key, show the mandatory
+    /// <see cref="MeetingSendPreviewWindow"/>, call the AI formatting client, confirm
+    /// before overwriting an existing summary, persist it, then export Markdown
+    /// (formatted result + raw log per settings) when an output folder is configured.
+    /// Returns true only once a summary has actually been saved.
+    /// </summary>
+    private async Task<bool> RunAiFormatFlowAsync()
+    {
+        if (_sessionId is not { } id)
+        {
+            return false;
+        }
+
+        try
+        {
+            var hasCredential = !string.IsNullOrWhiteSpace(
+                await _services.Credentials.GetAsync(CredentialTargets.OpenAiApiKey));
+            if (!hasCredential)
+            {
+                MessageBox.Show(
+                    this,
+                    "OpenAI APIキーが設定されていません。設定画面でCredential Managerへ保存してください。",
+                    "WorkLog AI",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return false;
+            }
+
+            var lines = await _services.Meetings.ListLinesAsync(id);
+            if (lines.Count == 0)
+            {
+                MessageBox.Show(this, "記録がありません。", "WorkLog AI");
+                return false;
+            }
+
+            var session = await _services.Meetings.GetSessionAsync(id)
+                ?? throw new InvalidOperationException("セッションが見つかりません。");
+            var settings = await _services.Settings.LoadAsync();
+
+            var preview = new MeetingSendPreviewWindow(session, lines, settings.OpenAiModel) { Owner = this };
+            if (preview.ShowDialog() != true)
+            {
+                return false;
+            }
+
+            var includedLines = preview.IncludedLines;
+            if (includedLines.Count == 0)
+            {
+                MessageBox.Show(this, "送信する行がありません。", "WorkLog AI");
+                return false;
+            }
+
+            var result = await _services.FormatMeetingAsync(session, includedLines);
+            if (!result.Succeeded || result.Formatted is not { } formatted)
+            {
+                MessageBox.Show(
+                    this,
+                    result.Error ?? "AI整形に失敗しました。",
+                    "WorkLog AI",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return false;
+            }
+
+            var existing = await _services.Meetings.GetLatestSummaryAsync(id);
+            if (existing is not null)
+            {
+                var overwrite = MessageBox.Show(
+                    this,
+                    "既存の整形結果を上書きしますか？",
+                    "WorkLog AI",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Question);
+                if (overwrite != MessageBoxResult.Yes)
+                {
+                    return false;
+                }
+            }
+
+            await _services.Meetings.SaveSummaryAsync(
+                id,
+                MeetingFormattedResultJson.Serialize(formatted),
+                formatted.SummaryLine);
+
+            await ExportFormattedMarkdownAsync(session, lines, formatted, settings);
+            return true;
+        }
+        catch (Exception exception)
+        {
+            ErrorLog.Log("MeetingCaptureWindow.AiFormat", exception);
+            MessageBox.Show(
+                this,
+                $"AI整形に失敗しました。\n{exception.Message}",
+                "WorkLog AI",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+            return false;
+        }
+    }
+
+    private async Task ExportFormattedMarkdownAsync(
+        MeetingSession session,
+        IReadOnlyList<MeetingLine> lines,
+        MeetingFormattedResult formatted,
+        AppSettingsSnapshot settings)
+    {
+        if (string.IsNullOrWhiteSpace(settings.MeetingOutputFolder))
+        {
+            MessageBox.Show(this, "出力フォルダ未設定でMarkdownは書き出されません。", "WorkLog AI");
+            return;
+        }
+
+        try
+        {
+            var markdown = MeetingMarkdownBuilder.Build(session, lines, formatted, settings.MeetingIncludeRawLog);
+            var path = new MeetingMarkdownWriter().Write(
+                settings.MeetingOutputFolder,
+                DateOnly.FromDateTime(session.StartedAt.DateTime),
+                session.Title,
+                markdown);
+            ExportResultPrompt.OfferToOpen(this, path);
+        }
+        catch (Exception exception)
+        {
+            ErrorLog.Log("MeetingCaptureWindow.ExportFormattedMarkdown", exception);
+            MessageBox.Show(
+                this,
+                $"Markdownを書き出せませんでした。\n{exception.Message}",
+                "WorkLog AI",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
+    }
+
     private async void OnClosingAsync(object? sender, CancelEventArgs e)
     {
         if (_closeArmed)
@@ -416,7 +602,7 @@ public sealed class MeetingCaptureWindow : Window
 
         try
         {
-            await _settingsStore.SetAsync(AppSettingKeys.MeetingWindowPlacement, FormatPlacement());
+            await _services.SettingsStore.SetAsync(AppSettingKeys.MeetingWindowPlacement, FormatPlacement());
         }
         catch (Exception exception)
         {
@@ -427,7 +613,7 @@ public sealed class MeetingCaptureWindow : Window
         {
             try
             {
-                await _meetings.UpdateSessionAsync(
+                await _services.Meetings.UpdateSessionAsync(
                     id,
                     _titleBox.Text.Trim(),
                     _participantsBox.Text.Trim(),
