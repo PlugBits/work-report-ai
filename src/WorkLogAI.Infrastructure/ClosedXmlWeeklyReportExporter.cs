@@ -7,7 +7,6 @@ public sealed class ClosedXmlWeeklyReportExporter : IWeeklyReportExporter
 {
     private static readonly XLColor HeaderFillColor = XLColor.FromHtml("#2E74B5");
     private const string FontName = "BIZ UDPゴシック";
-    private const double SpacerRowHeight = 6;
 
     public string CreateFileName(WeekRange range, ReportIdentity identity)
     {
@@ -118,9 +117,6 @@ public sealed class ClosedXmlWeeklyReportExporter : IWeeklyReportExporter
 
         var rowNumber = 4;
         DateOnly? previousDate = null;
-        var dayBlockStart = rowNumber;
-        var dayBlocks = new List<(int Start, int End)>();
-        var spacerRows = new List<int>();
 
         foreach (var day in dailyRows)
         {
@@ -128,14 +124,13 @@ public sealed class ClosedXmlWeeklyReportExporter : IWeeklyReportExporter
 
             if (previousDate is not null && day.Date != previousDate.Value)
             {
-                // Date changed from the previous row: close the current day's
-                // bordered block and insert one blank, borderless spacer row
-                // before starting the next day's block. Rows sharing a date
-                // (the 社内/社外 pair) stay adjacent — no spacer between them.
-                dayBlocks.Add((dayBlockStart, rowNumber - 1));
-                spacerRows.Add(rowNumber);
+                // Date changed from the previous row: insert one blank spacer
+                // row before starting the next day's rows. Rows sharing a
+                // date (the 社内/社外 pair) stay adjacent — no spacer between
+                // them. The spacer is an ordinary empty row within the
+                // continuous bordered grid, with no forced height, so it
+                // behaves like any other row under Excel's auto-fit.
                 rowNumber++;
-                dayBlockStart = rowNumber;
             }
 
             var dateLines = new List<string> { CategoryLabel(day.Category), day.Date.ToString("yyyy/MM/dd") };
@@ -163,41 +158,19 @@ public sealed class ClosedXmlWeeklyReportExporter : IWeeklyReportExporter
             rowNumber++;
         }
 
-        if (previousDate is not null)
-        {
-            dayBlocks.Add((dayBlockStart, rowNumber - 1));
-        }
-
         var lastRow = Math.Max(3, rowNumber - 1);
 
         var reportRange = sheet.Range(3, 1, lastRow, 4);
         sheet.Range(1, 1, lastRow, 4).Style.Alignment.WrapText = true;
         sheet.Range(1, 1, lastRow, 4).Style.Font.FontName = FontName;
         reportRange.Style.Alignment.Vertical = XLAlignmentVerticalValues.Top;
-
-        // Border each day's contiguous block of real data rows individually so
-        // the blank spacer rows between different dates stay completely
-        // borderless; the header row (row 3) already has its own border above.
-        foreach (var block in dayBlocks)
-        {
-            var blockRange = sheet.Range(block.Start, 1, block.End, 4);
-            blockRange.Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
-            blockRange.Style.Border.InsideBorder = XLBorderStyleValues.Thin;
-        }
-
+        reportRange.Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
+        reportRange.Style.Border.InsideBorder = XLBorderStyleValues.Thin;
         sheet.Column(1).Width = 20.14; // 146 px
         sheet.Column(2).Width = 39.71; // 283 px
         sheet.Column(3).Width = 69.29; // 490 px
         sheet.Column(4).Width = 60.14; // 426 px
         sheet.Rows(1, lastRow).AdjustToContents();
-
-        // Shrink spacer rows to a slim visual gap. Must run after
-        // AdjustToContents, which otherwise re-expands every row (including
-        // blank ones) to the default content height.
-        foreach (var spacerRow in spacerRows)
-        {
-            sheet.Row(spacerRow).Height = SpacerRowHeight;
-        }
 
         sheet.PageSetup.PageOrientation = XLPageOrientation.Landscape;
         sheet.PageSetup.PagesWide = 1;

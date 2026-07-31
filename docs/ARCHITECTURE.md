@@ -521,11 +521,11 @@ default font is set to BIZ UDPゴシック right after worksheet creation and ag
 explicitly on the title, header, and data ranges; it ships with Windows 10
 1809+ and Windows 11, so no separate install is needed. Between each pair of
 consecutive `DailyReportRow`s whose `Date` differs, the render core inserts one
-completely empty, borderless spacer row (height 6pt, set after
-`AdjustToContents` so auto-fit doesn't override it) — same-date 社内/社外 rows
-stay adjacent with no spacer between them. Borders are applied per contiguous
-same-date block rather than as one blanket range across the whole data area, so
-the spacer rows stay borderless; the header row keeps its own border. Print
+completely empty spacer row — same-date 社内/社外 rows stay adjacent with no
+spacer between them. A single blanket border range covers the header plus the
+entire data area, spacer rows included, so the grid never breaks; spacer rows
+get no explicit height, so they stay ordinary rows that `AdjustToContents` and
+any later manual auto-fit re-run in Excel size like any other empty row. Print
 area and freeze-row math account for the extra spacer rows automatically since
 they are folded into the same running row counter as the data rows.
 
