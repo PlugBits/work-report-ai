@@ -162,6 +162,42 @@ public sealed class MeetingFormatClientTests
         Assert.Equal("要約", result.Formatted!.SummaryLine);
     }
 
+    [Fact]
+    public async Task Transient_500_is_retried_twice_and_then_succeeds()
+    {
+        var handler = new SequenceHandler(
+            [HttpStatusCode.InternalServerError, HttpStatusCode.InternalServerError, HttpStatusCode.OK],
+            SuccessResponse());
+        var delays = new List<TimeSpan>();
+        var client = new MeetingFormatClient(
+            new HttpClient(handler),
+            new FakeCredentialStore(Secret),
+            retryDelay: (delay, _) => { delays.Add(delay); return Task.CompletedTask; });
+
+        var result = await client.FormatAsync(
+            new MeetingFormatRequest(Session(), [Line(1, MeetingMarker.None, "safe", 9, 0)], "gpt-5.6-sol"));
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(3, handler.Attempts);
+        Assert.Equal(2, delays.Count);
+    }
+
+    [Fact]
+    public async Task Unauthorized_401_fails_immediately_without_retry()
+    {
+        var handler = new SequenceHandler([HttpStatusCode.Unauthorized], "");
+        var client = new MeetingFormatClient(
+            new HttpClient(handler),
+            new FakeCredentialStore(Secret),
+            retryDelay: (_, _) => throw new InvalidOperationException("must not delay"));
+
+        var result = await client.FormatAsync(
+            new MeetingFormatRequest(Session(), [Line(1, MeetingMarker.None, "safe", 9, 0)], "gpt-5.6-sol"));
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(1, handler.Attempts);
+    }
+
     private static MeetingFormatClient Client(CaptureHandler handler) =>
         new(new HttpClient(handler), new FakeCredentialStore(Secret));
 
@@ -227,6 +263,26 @@ public sealed class MeetingFormatClientTests
             {
                 Content = new StringContent(response, Encoding.UTF8, "application/json")
             };
+        }
+    }
+
+    private sealed class SequenceHandler(IReadOnlyList<HttpStatusCode> statusCodes, string successBody)
+        : HttpMessageHandler
+    {
+        public int Attempts { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var statusCode = statusCodes[Math.Min(Attempts, statusCodes.Count - 1)];
+            Attempts++;
+            var response = new HttpResponseMessage(statusCode);
+            if (statusCode == HttpStatusCode.OK)
+            {
+                response.Content = new StringContent(successBody, Encoding.UTF8, "application/json");
+            }
+            return Task.FromResult(response);
         }
     }
 

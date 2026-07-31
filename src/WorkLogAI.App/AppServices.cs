@@ -61,10 +61,36 @@ public sealed class AppServices
         {
             ErrorLog.Log("AppServices.CandidateTextCleanup", exception);
         }
+        if (!_sampleMode)
+        {
+            try
+            {
+                await new DataRetentionService(SourceEvents, Candidates).RunAsync(DateTimeOffset.Now);
+            }
+            catch (Exception exception)
+            {
+                ErrorLog.Log("AppServices.DataRetention", exception);
+            }
+        }
         if (_sampleMode)
         {
             await new SampleDataSeeder(Notes, SourceEvents, Candidates).SeedIfEmptyAsync();
         }
+    }
+
+    /// <summary>
+    /// Re-runs the same best-effort backup check the startup path uses. Called from
+    /// the tray app's reminder timer once per day so a long-running instance that
+    /// never restarts still gets a weekly backup opportunity. A no-op in sample mode.
+    /// </summary>
+    public void RunDatabaseBackupIfDue()
+    {
+        if (_sampleMode)
+        {
+            return;
+        }
+
+        RunDatabaseBackup();
     }
 
     private void RunDatabaseBackup()
@@ -175,6 +201,17 @@ public sealed class AppServices
             var merged = new CandidateMergeService().Merge(result.Candidates);
             result = result with { Candidates = merged };
             await Candidates.SaveGeneratedAsync(range.Start, merged, cancellationToken);
+
+            // AI-shaped candidates now exist for this week's evidence — deselect any
+            // still-selected, unedited local row (quick memo/meeting) whose evidence is
+            // fully covered by them, so the raw local text does not also reach export.
+            var weekCandidates = await Candidates.ListAsync(range.Start, cancellationToken);
+            var supersededIds = LocalCandidateSuppressor.SelectSupersededIds(merged, weekCandidates);
+            if (supersededIds.Count > 0)
+            {
+                await Candidates.SetSelectedAsync(supersededIds, false, cancellationToken);
+            }
+            result = result with { DeselectedLocalCount = supersededIds.Count };
         }
         return result;
     }

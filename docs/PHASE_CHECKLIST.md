@@ -160,8 +160,9 @@ Teams, OneDrive, or additional mailboxes).
 - [x] Migration `003_meeting_mode.sql` idempotently adds `meeting_sessions`,
       `meeting_lines`, and `meeting_summaries`
 - [x] `Ctrl + Alt + M` hotkey via a now-parameterized `GlobalHotKey`, independently
-      toggled from `Ctrl + Alt + W`, gated by `meeting.hotkey_enabled` (default on,
-      restart required to take effect)
+      toggled from `Ctrl + Alt + W`, gated by `meeting.hotkey_enabled` (default on;
+      `App.ApplyMeetingHotKeySetting` now applies a toggle immediately on settings
+      save instead of requiring a restart — see Post-Phase 4 additions below)
 - [x] `MeetingCaptureWindow`: title/participants/kind header, Enter-confirmed
       timestamped lines with no separate save step, inline double-click edit and
       `Delete` removal, remembered window placement
@@ -215,16 +216,79 @@ Teams, OneDrive, or additional mailboxes).
       multi-item aggregation), repository summary methods, mapper, collector, and
       `MeetingFormattedResultJson` round-trip — no live API test
 
+## Post-Phase 4 reliability, generation-quality, and CI additions
+
+- [x] AI candidates supersede covered local rows: after a successful generation,
+      `LocalCandidateSuppressor.SelectSupersededIds` deselects any still-selected,
+      unedited local row (quick memo/meeting summary) whose entire evidence set is
+      fully covered by the newly generated AI candidates; a partially-covered row
+      stays selected. The generation-summary banner reports the deselected count
+      (「元メモ由来の行 N件の採用を外しました」)
+- [x] `SourceEventDeduplicator.LatestPerRef` collapses events sharing a stable
+      `sourceRef` (e.g. a re-formatted meeting) down to the newest by
+      `CollectedAt`/`OccurredAt`/id, applied before both local mapping and the
+      outbound AI prompt build, so a re-formatted meeting no longer double-counts
+- [x] Shared `TransientRetryPolicy` retries a 429/5xx/transport failure up to twice
+      with backoff (honoring a bounded `Retry-After`) for both weekly generation's
+      `OpenAiResponsesClient` and 議事録モード's `MeetingFormatClient`;
+      non-retryable statuses (400/401/403/404) still return immediately
+- [x] Settings AI tab gains **APIキーをテスト** (`OpenAiKeyProbe`): a bare
+      `GET /v1/models` liveness check reporting only ok/unauthorized/network-error,
+      never the key or a response body
+- [x] Single-instance guard: a named `Mutex` (separate name under `--sample-data`)
+      rejects a second launch with a Japanese notice instead of a duplicate tray
+      icon and hotkey conflict; released defensively on exit
+- [x] Meeting hotkey toggle applies immediately via
+      `App.ApplyMeetingHotKeySetting` on settings save, replacing the previous
+      restart-required behavior
+- [x] Settings window reorganized into five tabs (基本/収集/AI/Microsoft 365/議事録)
+      at a fixed 560×560 size; every control/handler/validation moved unchanged
+- [x] `.github/workflows/ci.yml`: `windows-latest` build-test job (`restore` /
+      `build -c Release` / `test -c Release`) on push and pull request to `main` —
+      the only place `WorkLogAI.App` (WPF) actually compiles end to end, since this
+      repository's own dev host cannot target `net8.0-windows` with `UseWPF`
+- [x] `DataRetentionService`: deletes `source_events` older than 180 days that are
+      not referenced by any stored report candidate's evidence list (any week,
+      origin, edited, or selected state); runs once at startup (skipped under
+      `--sample-data`), non-fatal on failure
+- [x] Daily backup due-check: the existing 60-second reminder timer also checks
+      once per calendar day (`backup.last_checked_date` state) and re-invokes
+      `DatabaseBackupService.RunIfNeeded()`, so a tray instance that never restarts
+      still gets a weekly backup opportunity
+- [x] Monthly summary export: tray action **月次まとめを出力…** opens a month picker
+      (current month plus the previous 11, built by the pure `MonthOptionBuilder`)
+      and exports every selected candidate whose `work_date` falls in that
+      calendar month — spanning any number of weeks — via
+      `IReportCandidateRepository.ListSelectedByDateRangeAsync` and
+      `IWeeklyReportExporter.ExportMonthAsync`, reusing the exact weekly
+      per-day/社内-社外 grouped layout. Filename
+      `{sanitized title} 月次 {yyyyMM}.xlsx`; an empty month shows
+      「対象月に採用済みの行がありません。」 instead of writing a file
+- [x] Automated tests: retry policy (retryable/non-retryable status, Retry-After
+      honored, exhaustion, injectable delay), key probe (ok/unauthorized/network
+      error via mocked handler), local-candidate-supersede selection rules,
+      sourceRef-latest-wins deduplication (including reversed-input-order
+      determinism), data retention (unreferenced-deleted/referenced-kept/
+      recent-kept/idempotent), monthly repository range query, monthly export
+      (filename, title cell, multi-week day-grouping, category split), and month
+      option builder (count, ordering, year-boundary wrap) — no live API test
+
 ## Explicitly not implemented after Phase 4
 
 - [ ] Phase 5: installer, crash recovery, and automatic updates
 
 Auto-start, the local error log, and the weekly database backup — the Phase 5
 operational-quality items that overlap with usability work — are already
-implemented above. There are no GitHub network calls, installer, or auto-update
-code. The secret stores are Windows Credential Manager (OpenAI API key only, shared
-by weekly generation and 議事録モード AI整形) and the DPAPI-encrypted MSAL token
-cache file (Microsoft Graph tokens only). The only external calls are the explicit
-user-approved OpenAI Responses request for weekly generation, the same Responses
-endpoint for meeting AI整形 (gated by its own mandatory per-line send preview), and
-the explicit, toggle-gated Microsoft Graph REST reads.
+implemented above, and the deletion and daily-check work above (180-day source-event
+retention, daily backup due-check) further rounds out that operational-quality set.
+`.github/workflows/ci.yml` adds Windows CI build/test coverage but is developer
+tooling, not application runtime behavior — there are still no GitHub network calls
+*from the running app*, no installer, and no auto-update code. The secret stores
+remain Windows Credential Manager (OpenAI API key only, shared by weekly generation
+and 議事録モード AI整形) and the DPAPI-encrypted MSAL token cache file (Microsoft
+Graph tokens only). The app's external calls are the explicit user-approved OpenAI
+Responses request for weekly generation, the same Responses endpoint for meeting
+AI整形 (gated by its own mandatory per-line send preview), the settings-only
+**APIキーをテスト** liveness probe, and the explicit, toggle-gated Microsoft Graph
+REST reads — all now uniformly retried through `TransientRetryPolicy` where they
+are simple HTTP sends (the two Responses API clients).

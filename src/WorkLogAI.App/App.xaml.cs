@@ -14,6 +14,9 @@ public partial class App : System.Windows.Application
 
     private static readonly TimeSpan DialogSuppressionWindow = TimeSpan.FromSeconds(30);
 
+    private const string SingleInstanceMutexName = "WorkLogAI.App.SingleInstance";
+    private const string SingleInstanceSampleMutexName = "WorkLogAI.App.SingleInstance.Sample";
+
     private Forms.NotifyIcon? _trayIcon;
     private GlobalHotKey? _hotKey;
     private GlobalHotKey? _meetingHotKey;
@@ -22,11 +25,30 @@ public partial class App : System.Windows.Application
     private int _collectionRunning;
     private bool _sampleMode;
     private DateTime _lastUnhandledDialogShownAt = DateTime.MinValue;
+    private Mutex? _singleInstanceMutex;
+    private bool _singleInstanceMutexOwned;
 
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
+
+        _sampleMode = e.Args.Any(
+            value => string.Equals(value, "--sample-data", StringComparison.OrdinalIgnoreCase));
+
+        var mutexName = _sampleMode ? SingleInstanceSampleMutexName : SingleInstanceMutexName;
+        _singleInstanceMutex = new Mutex(initiallyOwned: true, mutexName, out var createdNew);
+        _singleInstanceMutexOwned = createdNew;
+        if (!createdNew)
+        {
+            MessageBox.Show(
+                "WorkLog AI は既に起動しています。タスクトレイのアイコンをご確認ください。",
+                "WorkLog AI",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            Shutdown(0);
+            return;
+        }
 
         DispatcherUnhandledException += OnDispatcherUnhandledException;
         AppDomain.CurrentDomain.UnhandledException += OnDomainUnhandledException;
@@ -34,8 +56,6 @@ public partial class App : System.Windows.Application
 
         try
         {
-            _sampleMode = e.Args.Any(
-                value => string.Equals(value, "--sample-data", StringComparison.OrdinalIgnoreCase));
             _services = new AppServices(_sampleMode);
             await _services.InitializeAsync();
             CreateTrayIcon(_sampleMode);
@@ -53,15 +73,7 @@ public partial class App : System.Windows.Application
             var startupSettings = await _services.Settings.LoadAsync();
             if (startupSettings.MeetingHotkeyEnabled)
             {
-                _meetingHotKey = new GlobalHotKey(Key.M, MeetingHotKeyId, ShowMeetingMode);
-                if (!_meetingHotKey.Register())
-                {
-                    MessageBox.Show(
-                        "Ctrl+Alt+M を登録できませんでした。別のアプリで使用されている可能性があります。",
-                        "WorkLog AI",
-                        MessageBoxButton.OK,
-                        MessageBoxImage.Warning);
-                }
+                EnableMeetingHotKey();
             }
 
             StartReminderTimer();
@@ -87,6 +99,34 @@ public partial class App : System.Windows.Application
         {
             _trayIcon.Visible = false;
             _trayIcon.Dispose();
+        }
+
+        if (_singleInstanceMutex is not null)
+        {
+            try
+            {
+                if (_singleInstanceMutexOwned)
+                {
+                    _singleInstanceMutex.ReleaseMutex();
+                    _singleInstanceMutexOwned = false;
+                }
+            }
+            catch
+            {
+                // Abandoned-mutex or already-released edge cases must never crash exit.
+            }
+            finally
+            {
+                try
+                {
+                    _singleInstanceMutex.Dispose();
+                }
+                catch
+                {
+                    // Never crash exit on disposal failure.
+                }
+                _singleInstanceMutex = null;
+            }
         }
 
         base.OnExit(e);
@@ -169,6 +209,7 @@ public partial class App : System.Windows.Application
         menu.Items.Add("クイック入力 (Ctrl+Alt+W)", null, (_, _) => ShowQuickCapture());
         menu.Items.Add("議事録を開始 (Ctrl+Alt+M)", null, (_, _) => ShowMeetingMode());
         menu.Items.Add("週報候補を生成…", null, async (_, _) => await GenerateCandidatesAsync());
+        menu.Items.Add("月次まとめを出力…", null, async (_, _) => await ExportMonthlySummaryAsync());
         menu.Items.Add("今週の記録を見る", null, (_, _) => ShowHistory());
         menu.Items.Add("設定", null, (_, _) => ShowSettings());
         menu.Items.Add(new Forms.ToolStripSeparator());
@@ -197,6 +238,8 @@ public partial class App : System.Windows.Application
 
         try
         {
+            await CheckDailyBackupAsync();
+
             var settings = await _services.Settings.LoadAsync();
             var lastShownValue = await _services.SettingsStore.GetAsync(
                 AppSettingKeys.ReminderLastShownDate);
@@ -239,6 +282,39 @@ public partial class App : System.Windows.Application
         }
     }
 
+    /// <summary>
+    /// Runs at most once per calendar day from the reminder timer tick, so a tray
+    /// instance that stays alive for days without restarting still gets a chance at
+    /// the weekly database backup (which otherwise only ran at startup).
+    /// <see cref="DatabaseBackupService.RunIfNeeded"/> remains idempotent per week;
+    /// this only widens how often it gets invoked.
+    /// </summary>
+    private async Task CheckDailyBackupAsync()
+    {
+        if (_services is null)
+        {
+            return;
+        }
+
+        var today = DateOnly.FromDateTime(DateTime.Now);
+        var lastCheckedValue = await _services.SettingsStore.GetAsync(
+            AppSettingKeys.BackupLastCheckedDate);
+        var lastChecked = DateOnly.TryParseExact(lastCheckedValue, "yyyy-MM-dd", out var parsed)
+            ? parsed
+            : (DateOnly?)null;
+
+        if (lastChecked == today)
+        {
+            return;
+        }
+
+        await _services.SettingsStore.SetAsync(
+            AppSettingKeys.BackupLastCheckedDate,
+            today.ToString("yyyy-MM-dd"));
+
+        _services.RunDatabaseBackupIfDue();
+    }
+
     private void ShowQuickCapture()
     {
         if (_services is null)
@@ -252,6 +328,53 @@ public partial class App : System.Windows.Application
             window.Show();
             window.Activate();
         });
+    }
+
+    private void EnableMeetingHotKey()
+    {
+        if (_meetingHotKey is not null)
+        {
+            return;
+        }
+
+        _meetingHotKey = new GlobalHotKey(Key.M, MeetingHotKeyId, ShowMeetingMode);
+        if (!_meetingHotKey.Register())
+        {
+            MessageBox.Show(
+                "Ctrl+Alt+M を登録できませんでした。別のアプリで使用されている可能性があります。",
+                "WorkLog AI",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        }
+    }
+
+    private void DisableMeetingHotKey()
+    {
+        if (_meetingHotKey is null)
+        {
+            return;
+        }
+
+        _meetingHotKey.Dispose();
+        _meetingHotKey = null;
+    }
+
+    public void ApplyMeetingHotKeySetting(bool enabled)
+    {
+        var currentlyEnabled = _meetingHotKey is not null;
+        if (enabled == currentlyEnabled)
+        {
+            return;
+        }
+
+        if (enabled)
+        {
+            EnableMeetingHotKey();
+        }
+        else
+        {
+            DisableMeetingHotKey();
+        }
     }
 
     private void ShowMeetingMode() => _ = ShowMeetingModeAsync();
@@ -393,6 +516,10 @@ public partial class App : System.Windows.Application
                 $"AI候補 {generation.Candidates.Count}件を生成しました（送信イベント {generation.SentEventCount}件、" +
                 $"収集警告 {collection.Errors.Count}件、切り詰め{(generation.InputTruncated ? "あり" : "なし")}）。" +
                 "不要な行は採用チェックを外してください。";
+            if (generation.DeselectedLocalCount > 0)
+            {
+                banner += $"元メモ由来の行 {generation.DeselectedLocalCount}件の採用を外しました(AI候補に置換)。";
+            }
             new CandidateWindow(_services, range, banner).Show();
         }
         catch (Exception exception)
@@ -408,6 +535,51 @@ public partial class App : System.Windows.Application
         {
             progress?.Close();
             Interlocked.Exchange(ref _collectionRunning, 0);
+        }
+    }
+
+    private async Task ExportMonthlySummaryAsync()
+    {
+        if (_services is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var picker = new MonthPickerWindow(DateOnly.FromDateTime(DateTime.Today));
+            if (picker.ShowDialog() != true || picker.SelectedMonth is not { } month)
+            {
+                return;
+            }
+
+            var settings = await _services.Settings.LoadAsync();
+            var firstDay = new DateOnly(month.Year, month.Month, 1);
+            var lastDay = firstDay.AddMonths(1).AddDays(-1);
+            var candidates = await _services.Candidates.ListSelectedByDateRangeAsync(firstDay, lastDay);
+            if (candidates.Count == 0)
+            {
+                MessageBox.Show("対象月に採用済みの行がありません。", "WorkLog AI");
+                return;
+            }
+
+            var rows = new CandidateReportMapper().MapSelected(candidates);
+            var path = await _services.Exporter.ExportMonthAsync(
+                month.Year,
+                month.Month,
+                rows,
+                settings.ExcelOutputDirectory,
+                new ReportIdentity(settings.CompanyName, settings.EmployeeName, settings.ReportTitle));
+            ExportResultPrompt.OfferToOpen(path);
+        }
+        catch (Exception exception)
+        {
+            ErrorLog.Log("App.ExportMonthlySummary", exception);
+            MessageBox.Show(
+                $"月次まとめを出力できませんでした。\n{exception.Message}",
+                "WorkLog AI",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
         }
     }
 

@@ -18,7 +18,8 @@ namespace WorkLogAI.Infrastructure;
 public sealed class MeetingFormatClient(
     HttpClient httpClient,
     ICredentialStore credentials,
-    TimeSpan? timeout = null) : IMeetingFormatClient
+    TimeSpan? timeout = null,
+    Func<TimeSpan, CancellationToken, Task>? retryDelay = null) : IMeetingFormatClient
 {
     public static readonly Uri Endpoint = new("https://api.openai.com/v1/responses");
 
@@ -54,19 +55,14 @@ public sealed class MeetingFormatClient(
         }
 
         var body = BuildRequest(request.Model, payload.Input);
-        using var message = new HttpRequestMessage(HttpMethod.Post, Endpoint);
-        message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
-        message.Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json");
 
-        using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutSource.CancelAfter(timeout ?? TimeSpan.FromSeconds(60));
         HttpResponseMessage response;
         try
         {
-            response = await httpClient.SendAsync(
-                message,
-                HttpCompletionOption.ResponseHeadersRead,
-                timeoutSource.Token);
+            response = await TransientRetryPolicy.ExecuteAsync(
+                ct => SendAsync(key, body, ct),
+                cancellationToken,
+                retryDelay);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -87,9 +83,11 @@ public sealed class MeetingFormatClient(
             }
 
             string responseText;
+            using var readTimeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            readTimeoutSource.CancelAfter(timeout ?? TimeSpan.FromSeconds(60));
             try
             {
-                responseText = await ReadBoundedAsync(response.Content, timeoutSource.Token);
+                responseText = await ReadBoundedAsync(response.Content, readTimeoutSource.Token);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -102,6 +100,23 @@ public sealed class MeetingFormatClient(
 
             return Parse(responseText);
         }
+    }
+
+    private async Task<HttpResponseMessage> SendAsync(
+        string key,
+        JsonObject body,
+        CancellationToken cancellationToken)
+    {
+        using var message = new HttpRequestMessage(HttpMethod.Post, Endpoint);
+        message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
+        message.Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json");
+
+        using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutSource.CancelAfter(timeout ?? TimeSpan.FromSeconds(60));
+        return await httpClient.SendAsync(
+            message,
+            HttpCompletionOption.ResponseHeadersRead,
+            timeoutSource.Token);
     }
 
     internal static JsonObject BuildRequest(string model, string input) =>

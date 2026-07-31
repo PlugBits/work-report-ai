@@ -136,6 +136,41 @@ public sealed class SqliteReportCandidateRepository(SqliteConnectionFactory conn
         CancellationToken cancellationToken = default) =>
         ReplaceWeekAsync(weekStart, candidates, cancellationToken);
 
+    public async Task<int> SetSelectedAsync(
+        IReadOnlyCollection<Guid> ids,
+        bool selected,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+        var distinctIds = ids.Distinct().ToArray();
+        if (distinctIds.Length == 0)
+        {
+            return 0;
+        }
+
+        await using var connection = connectionFactory.Create();
+        await connection.OpenAsync(cancellationToken);
+        var updated = 0;
+        const int chunkSize = 500;
+        foreach (var chunk in distinctIds.Chunk(chunkSize))
+        {
+            await using var command = connection.CreateCommand();
+            var parameters = chunk.Select((id, index) => (id, name: $"$id{index}")).ToArray();
+            command.CommandText = $"""
+                UPDATE report_candidates
+                SET selected = $selected
+                WHERE id IN ({string.Join(",", parameters.Select(item => item.name))});
+                """;
+            command.Parameters.AddWithValue("$selected", selected ? 1 : 0);
+            foreach (var parameter in parameters)
+            {
+                command.Parameters.AddWithValue(parameter.name, parameter.id.ToString("D"));
+            }
+            updated += await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        return updated;
+    }
+
     public async Task<IReadOnlyList<(Guid Id, string Activity)>> ListActivitiesContainingAsync(
         string needle,
         CancellationToken cancellationToken = default)
@@ -177,6 +212,71 @@ public sealed class SqliteReportCandidateRepository(SqliteConnectionFactory conn
         command.Parameters.AddWithValue("$activity", activity);
         command.Parameters.AddWithValue("$id", id.ToString("D"));
         await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<string>> ListAllSourceEventIdJsonAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var values = new List<string>();
+        await using var connection = connectionFactory.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT source_event_ids_json FROM report_candidates;";
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            values.Add(reader.GetString(0));
+        }
+
+        return values;
+    }
+
+    public async Task<IReadOnlyList<ReportCandidate>> ListSelectedByDateRangeAsync(
+        DateOnly fromInclusive,
+        DateOnly toInclusive,
+        CancellationToken cancellationToken = default)
+    {
+        var candidates = new List<ReportCandidate>();
+        await using var connection = connectionFactory.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT id, week_start, work_date, work_item, activity, result_or_next,
+                   status, confidence, selected, edited, source_event_ids_json,
+                   needs_confirmation, confirmation_question, origin, category
+            FROM report_candidates
+            WHERE selected = 1
+              AND work_date >= $from
+              AND work_date <= $to
+            ORDER BY work_date, id;
+            """;
+        command.Parameters.AddWithValue("$from", fromInclusive.ToString("yyyy-MM-dd"));
+        command.Parameters.AddWithValue("$to", toInclusive.ToString("yyyy-MM-dd"));
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var sourceIds = JsonSerializer.Deserialize<Guid[]>(reader.GetString(10)) ?? [];
+            candidates.Add(new ReportCandidate(
+                Guid.Parse(reader.GetString(0)),
+                DateOnly.Parse(reader.GetString(1)),
+                DateOnly.Parse(reader.GetString(2)),
+                reader.GetString(3),
+                reader.GetString(4),
+                reader.GetString(5),
+                reader.GetString(6),
+                reader.GetDouble(7),
+                reader.GetInt64(8) == 1,
+                reader.GetInt64(9) == 1,
+                sourceIds,
+                reader.GetInt64(11) == 1,
+                reader.IsDBNull(12) ? null : reader.GetString(12),
+                reader.GetString(13),
+                reader.GetString(14)));
+        }
+
+        return candidates;
     }
 
     private static string EscapeLike(string value) =>

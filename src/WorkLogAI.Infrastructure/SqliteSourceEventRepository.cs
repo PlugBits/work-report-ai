@@ -149,6 +149,30 @@ public sealed class SqliteSourceEventRepository(SqliteConnectionFactory connecti
         return deleted;
     }
 
+    public async Task<IReadOnlyList<Guid>> ListIdsOlderThanAsync(
+        DateTimeOffset cutoff,
+        CancellationToken cancellationToken = default)
+    {
+        var ids = new List<Guid>();
+        await using var connection = connectionFactory.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT id
+            FROM source_events
+            WHERE julianday(occurred_at) < julianday($cutoff);
+            """;
+        command.Parameters.AddWithValue("$cutoff", Format(cutoff));
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            ids.Add(Guid.Parse(reader.GetString(0)));
+        }
+
+        return ids;
+    }
+
     private static string Format(DateTimeOffset value) =>
         value.ToString("O", CultureInfo.InvariantCulture);
 

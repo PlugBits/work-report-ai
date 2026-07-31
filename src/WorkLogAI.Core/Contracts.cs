@@ -45,6 +45,15 @@ public interface ISourceEventRepository
     Task<int> DeleteByIdsAsync(
         IReadOnlyCollection<Guid> ids,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Lists the ids of every source event whose occurred_at is strictly older than
+    /// <paramref name="cutoff"/>. Used by <c>DataRetentionService</c> to find deletion
+    /// candidates before excluding any id still referenced by a report candidate.
+    /// </summary>
+    Task<IReadOnlyList<Guid>> ListIdsOlderThanAsync(
+        DateTimeOffset cutoff,
+        CancellationToken cancellationToken = default);
 }
 
 public interface IReportCandidateRepository
@@ -74,6 +83,16 @@ public interface IReportCandidateRepository
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Updates only the selected column for the given candidate ids. Other columns
+    /// (including origin/edited) are left untouched. Returns the number of rows
+    /// actually updated; an empty id collection is a no-op that returns 0.
+    /// </summary>
+    Task<int> SetSelectedAsync(
+        IReadOnlyCollection<Guid> ids,
+        bool selected,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Lists the id and activity text of every stored candidate (any week, any
     /// origin/edited/selected state) whose activity contains <paramref name="needle"/>.
     /// Used by the one-time startup cleanup that strips leftover git file-list text
@@ -91,6 +110,26 @@ public interface IReportCandidateRepository
     Task UpdateActivityAsync(
         Guid id,
         string activity,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Returns the raw <c>source_event_ids_json</c> column value for every stored
+    /// candidate (any week, any origin/edited/selected state). Used by
+    /// <c>DataRetentionService</c> to determine which source events are still
+    /// referenced before deleting old, unreferenced ones.
+    /// </summary>
+    Task<IReadOnlyList<string>> ListAllSourceEventIdJsonAsync(
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Lists all candidates whose selected column is 1 and whose work_date falls
+    /// within [<paramref name="fromInclusive"/>, <paramref name="toInclusive"/>],
+    /// spanning any week_start, ordered by work_date. Used by the monthly summary
+    /// export.
+    /// </summary>
+    Task<IReadOnlyList<ReportCandidate>> ListSelectedByDateRangeAsync(
+        DateOnly fromInclusive,
+        DateOnly toInclusive,
         CancellationToken cancellationToken = default);
 }
 
@@ -203,6 +242,21 @@ public interface IWeeklyReportExporter
 
     Task<string> ExportAsync(
         WeekRange range,
+        IEnumerable<ReportRow> rows,
+        string outputDirectory,
+        ReportIdentity identity,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Renders the same per-day/社内-社外 grouped layout as <see cref="ExportAsync"/>,
+    /// but for a whole calendar month spanning any number of week_start groupings —
+    /// used by the monthly summary export (月次まとめ). The filename is
+    /// <c>{sanitized title} 月次 {yyyyMM}.xlsx</c> and the title cell reads
+    /// <c>{ReportTitle} {year}年{month}月 月次まとめ</c>.
+    /// </summary>
+    Task<string> ExportMonthAsync(
+        int year,
+        int month,
         IEnumerable<ReportRow> rows,
         string outputDirectory,
         ReportIdentity identity,

@@ -84,7 +84,8 @@ public sealed class LocalCollectionCoordinator(
         }
 
         var weeklyEvents = await sourceEvents.ListAsync(range, cancellationToken);
-        var mapped = weeklyEvents.Select(sourceEvent => mapper.Map(sourceEvent, range.Start)).ToArray();
+        var deduplicated = SourceEventDeduplicator.LatestPerRef(weeklyEvents);
+        var mapped = deduplicated.Select(sourceEvent => mapper.Map(sourceEvent, range.Start)).ToArray();
         await candidates.SaveLocalAsync(range.Start, mapped, cancellationToken);
 
         return new CollectionRunResult(range, totalInserted, mapped.Length, summaries);
@@ -137,6 +138,53 @@ public sealed class LocalSourceEventMapper
 
     private static string JoinNonBlank(string first, string second) =>
         string.Join(" — ", new[] { first, second }.Where(value => !string.IsNullOrWhiteSpace(value)));
+}
+
+/// <summary>
+/// Collapses events that share a stable <see cref="SourceEvent.SourceRef"/> down to the
+/// latest one. Some collectors (meeting re-formatting is the prime example) keep the
+/// same sourceRef across re-runs while the content changes, which otherwise leaves both
+/// the stale and the fresh event in source_events and lets both reach candidates/the AI.
+/// Stored events are never modified — this only shapes what a caller reads.
+/// </summary>
+public static class SourceEventDeduplicator
+{
+    public static IReadOnlyList<SourceEvent> LatestPerRef(IReadOnlyCollection<SourceEvent> events)
+    {
+        ArgumentNullException.ThrowIfNull(events);
+        var passthrough = new List<SourceEvent>();
+        var latestByRef = new Dictionary<string, SourceEvent>(StringComparer.Ordinal);
+        foreach (var sourceEvent in events)
+        {
+            if (string.IsNullOrWhiteSpace(sourceEvent.SourceRef))
+            {
+                passthrough.Add(sourceEvent);
+                continue;
+            }
+            if (!latestByRef.TryGetValue(sourceEvent.SourceRef, out var current)
+                || IsNewer(sourceEvent, current))
+            {
+                latestByRef[sourceEvent.SourceRef] = sourceEvent;
+            }
+        }
+        return passthrough.Concat(latestByRef.Values).ToArray();
+    }
+
+    // Deterministic ordering: newest CollectedAt wins, then newest OccurredAt, then the
+    // higher Id in ordinal string form — so two calls over the same input always agree.
+    private static bool IsNewer(SourceEvent candidate, SourceEvent current)
+    {
+        if (candidate.CollectedAt != current.CollectedAt)
+        {
+            return candidate.CollectedAt > current.CollectedAt;
+        }
+        if (candidate.OccurredAt != current.OccurredAt)
+        {
+            return candidate.OccurredAt > current.OccurredAt;
+        }
+        return string.CompareOrdinal(
+            candidate.Id.ToString("D"), current.Id.ToString("D")) > 0;
+    }
 }
 
 public static class SourceTypes

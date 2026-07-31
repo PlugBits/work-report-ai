@@ -12,7 +12,8 @@ public sealed record AiGenerationResult(
     IReadOnlyList<ReportCandidate> Candidates,
     bool InputTruncated,
     int SentEventCount,
-    string? Error = null)
+    string? Error = null,
+    int DeselectedLocalCount = 0)
 {
     public bool Succeeded => Error is null;
 }

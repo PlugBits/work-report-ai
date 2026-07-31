@@ -22,19 +22,65 @@ public sealed class ClosedXmlWeeklyReportExporter : IWeeklyReportExporter
         ReportIdentity identity,
         CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(identity);
+        var titleText =
+            $"{identity.ReportTitle} {range.Start:yyyy/MM/dd}〜{range.End:yyyy/MM/dd}";
+        return RenderAsync(
+            titleText,
+            CreateFileName(range, identity),
+            rows,
+            outputDirectory,
+            identity,
+            cancellationToken);
+    }
+
+    public string CreateMonthFileName(int year, int month, ReportIdentity identity)
+    {
+        ArgumentNullException.ThrowIfNull(identity);
+        var title = ReportFileNameSanitizer.Sanitize(identity.ReportTitle);
+        return $"{title} 月次 {year:D4}{month:D2}.xlsx";
+    }
+
+    public Task<string> ExportMonthAsync(
+        int year,
+        int month,
+        IEnumerable<ReportRow> rows,
+        string outputDirectory,
+        ReportIdentity identity,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(identity);
+        var titleText = $"{identity.ReportTitle} {year}年{month}月 月次まとめ";
+        return RenderAsync(
+            titleText,
+            CreateMonthFileName(year, month, identity),
+            rows,
+            outputDirectory,
+            identity,
+            cancellationToken);
+    }
+
+    private static Task<string> RenderAsync(
+        string titleText,
+        string fileName,
+        IEnumerable<ReportRow> rows,
+        string outputDirectory,
+        ReportIdentity identity,
+        CancellationToken cancellationToken)
+    {
         ArgumentNullException.ThrowIfNull(rows);
         ArgumentException.ThrowIfNullOrWhiteSpace(outputDirectory);
         ArgumentNullException.ThrowIfNull(identity);
         cancellationToken.ThrowIfCancellationRequested();
 
         Directory.CreateDirectory(outputDirectory);
-        var path = Path.Combine(outputDirectory, CreateFileName(range, identity));
+        var path = Path.Combine(outputDirectory, fileName);
         using var workbook = new XLWorkbook();
         var sheet = workbook.Worksheets.Add("業務週報");
         sheet.Style.Font.FontName = FontName;
 
         sheet.Range("A1:C1").Merge();
-        sheet.Cell("A1").Value = $"{identity.ReportTitle} {range.Start:yyyy/MM/dd}〜{range.End:yyyy/MM/dd}";
+        sheet.Cell("A1").Value = titleText;
         sheet.Cell("D1").Value = identity.CompanyName;
         sheet.Cell("D2").Value = identity.EmployeeName;
         sheet.Range("A1:D2").Style.Font.Bold = true;
