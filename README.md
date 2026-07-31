@@ -111,7 +111,9 @@ corners) applied consistently across all windows.
 - Git-sourced candidates show the commit subject, body summary, and add/delete
   statistics in **活動内容** instead of the raw changed-file list, which stays
   visible only in the card's 根拠 line; the same file-list-free text is sent to the
-  AI generation prompt.
+  AI generation prompt. Candidates already stored (including merged rows with
+  multiple file lists) before this stripping existed are cleaned up once at
+  startup so they don't keep showing the raw file list.
 - Both **Excel出力** actions (weekly review and history) ask **ファイルを開きますか？**
   after a successful export and open the file with the OS default handler on Yes.
 - A best-effort local error log (`ErrorLog`) appends `context`/exception

@@ -135,6 +135,55 @@ public sealed class SqliteReportCandidateRepository(SqliteConnectionFactory conn
         CancellationToken cancellationToken = default) =>
         ReplaceWeekAsync(weekStart, candidates, cancellationToken);
 
+    public async Task<IReadOnlyList<(Guid Id, string Activity)>> ListActivitiesContainingAsync(
+        string needle,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(needle);
+        var results = new List<(Guid Id, string Activity)>();
+        await using var connection = connectionFactory.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT id, activity
+            FROM report_candidates
+            WHERE activity LIKE $needle ESCAPE '\';
+            """;
+        command.Parameters.AddWithValue("$needle", "%" + EscapeLike(needle) + "%");
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            results.Add((Guid.Parse(reader.GetString(0)), reader.GetString(1)));
+        }
+
+        return results;
+    }
+
+    public async Task UpdateActivityAsync(
+        Guid id,
+        string activity,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = connectionFactory.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE report_candidates
+            SET activity = $activity
+            WHERE id = $id;
+            """;
+        command.Parameters.AddWithValue("$activity", activity);
+        command.Parameters.AddWithValue("$id", id.ToString("D"));
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static string EscapeLike(string value) =>
+        value
+            .Replace("\\", "\\\\", StringComparison.Ordinal)
+            .Replace("%", "\\%", StringComparison.Ordinal)
+            .Replace("_", "\\_", StringComparison.Ordinal);
+
     private static async Task InsertAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,

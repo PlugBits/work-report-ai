@@ -53,6 +53,14 @@ public sealed class AppServices
             RunDatabaseBackup();
         }
         await _database.InitializeAsync();
+        try
+        {
+            await new CandidateTextCleanup(Candidates).RunAsync();
+        }
+        catch (Exception exception)
+        {
+            ErrorLog.Log("AppServices.CandidateTextCleanup", exception);
+        }
         if (_sampleMode)
         {
             await new SampleDataSeeder(Notes, SourceEvents, Candidates).SeedIfEmptyAsync();
