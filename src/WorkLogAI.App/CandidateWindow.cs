@@ -307,6 +307,14 @@ public sealed class CandidateWindow : Window
         _ => "?"
     };
 
+    private static readonly CategoryOption[] CategoryOptions =
+    [
+        new CategoryOption("社内", ReportCategories.Internal),
+        new CategoryOption("社外", ReportCategories.External)
+    ];
+
+    private sealed record CategoryOption(string Label, string Value);
+
     private Border CreateCard(CandidateEditor item)
     {
         var panel = new StackPanel();
@@ -343,7 +351,27 @@ public sealed class CandidateWindow : Window
                 Mode = BindingMode.TwoWay,
                 UpdateSourceTrigger = UpdateSourceTrigger.PropertyChanged
             });
-        panel.Children.Add(Field("状態", status));
+        var statusAndCategory = new StackPanel { Orientation = Orientation.Horizontal };
+        statusAndCategory.Children.Add(Field("状態", status));
+        var category = new ComboBox
+        {
+            ItemsSource = CategoryOptions,
+            SelectedValuePath = "Value",
+            DisplayMemberPath = "Label",
+            Width = 120,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Margin = new Thickness(10, 0, 0, 0)
+        };
+        category.SetBinding(
+            ComboBox.SelectedValueProperty,
+            new Binding(nameof(item.Category))
+            {
+                Source = item,
+                Mode = BindingMode.TwoWay,
+                UpdateSourceTrigger = UpdateSourceTrigger.PropertyChanged
+            });
+        statusAndCategory.Children.Add(Field("区分", category));
+        panel.Children.Add(statusAndCategory);
         panel.Children.Add(new TextBlock
         {
             Text = $"AI確信度: {item.Confidence:P0}",
@@ -668,6 +696,7 @@ public sealed class CandidateWindow : Window
         private string _activity;
         private string _resultOrNext;
         private string _status;
+        private string _category;
         private bool _selected;
 
         public CandidateEditor(ReportCandidate candidate, string evidenceDescription)
@@ -678,6 +707,7 @@ public sealed class CandidateWindow : Window
             _activity = candidate.Activity;
             _resultOrNext = candidate.ResultOrNext;
             _status = candidate.Status;
+            _category = candidate.Category;
             _selected = candidate.Selected;
             EvidenceDescription = evidenceDescription;
         }
@@ -693,6 +723,7 @@ public sealed class CandidateWindow : Window
         public string Activity { get => _activity; set => Set(ref _activity, value); }
         public string ResultOrNext { get => _resultOrNext; set => Set(ref _resultOrNext, value); }
         public string Status { get => _status; set => Set(ref _status, value); }
+        public string Category { get => _category; set => Set(ref _category, value); }
         public bool Selected { get => _selected; set => Set(ref _selected, value); }
 
         public event PropertyChangedEventHandler? PropertyChanged;
@@ -704,6 +735,7 @@ public sealed class CandidateWindow : Window
             Activity = Activity.Trim(),
             ResultOrNext = ResultOrNext.Trim(),
             Status = Status,
+            Category = Category,
             Selected = Selected,
             Edited = true
         };

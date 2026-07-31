@@ -41,6 +41,7 @@ public sealed class AiValidationAndReviewTests
         Assert.Equal([sent], accepted.SourceEventIds);
         Assert.Equal(string.Empty, accepted.ResultOrNext);
         Assert.Equal(CandidateOrigins.Ai, accepted.Origin);
+        Assert.Equal(ReportCategories.Internal, accepted.Category);
         Assert.Equal(4, result.Rejections.Count);
     }
 
@@ -51,7 +52,7 @@ public sealed class AiValidationAndReviewTests
         var second = Guid.NewGuid();
         var left = Candidate(
             Guid.NewGuid(), new DateOnly(2026, 7, 29), "検査改善", "姿勢を確認",
-            "completed", [common], result: "確認済み");
+            "completed", [common], result: "確認済み") with { Category = ReportCategories.External };
         var right = Candidate(
             Guid.NewGuid(), new DateOnly(2026, 7, 30), "検査改善", "台車を試行",
             "pending", [common, second], result: "");
@@ -66,6 +67,8 @@ public sealed class AiValidationAndReviewTests
         Assert.Equal(new[] { common, second }.Order(), combined.SourceEventIds.Order());
         Assert.Equal("pending", combined.Status);
         Assert.Contains("確認済み", combined.ResultOrNext);
+        // Merge keeps the category of the first-merged (earlier-dated) item.
+        Assert.Equal(ReportCategories.External, combined.Category);
     }
 
     [Fact]
@@ -107,6 +110,21 @@ public sealed class AiValidationAndReviewTests
         Assert.False(persisted.Selected);
         Assert.True(persisted.Edited);
         Assert.Equal("user edit", persisted.Activity);
+    }
+
+    [Fact]
+    public void MapSelected_carries_the_candidates_category_into_the_report_row()
+    {
+        var internalCandidate = Candidate(
+            Guid.NewGuid(), new DateOnly(2026, 7, 28), "社内案件", "社内活動", "pending", [Guid.NewGuid()]);
+        var externalCandidate = Candidate(
+            Guid.NewGuid(), new DateOnly(2026, 7, 29), "社外案件", "社外活動", "pending", [Guid.NewGuid()])
+            with { Category = ReportCategories.External };
+
+        var rows = new CandidateReportMapper().MapSelected([internalCandidate, externalCandidate]);
+
+        Assert.Equal(ReportCategories.Internal, rows.Single(row => row.WorkItem == "社内案件").Category);
+        Assert.Equal(ReportCategories.External, rows.Single(row => row.WorkItem == "社外案件").Category);
     }
 
     [Fact]

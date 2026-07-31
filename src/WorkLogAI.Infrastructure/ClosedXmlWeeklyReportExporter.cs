@@ -6,6 +6,7 @@ namespace WorkLogAI.Infrastructure;
 public sealed class ClosedXmlWeeklyReportExporter : IWeeklyReportExporter
 {
     private static readonly XLColor HeaderFillColor = XLColor.FromHtml("#2E74B5");
+    private const string FontName = "Noto Sans JP";
 
     public string CreateFileName(WeekRange range, ReportIdentity identity)
     {
@@ -30,6 +31,7 @@ public sealed class ClosedXmlWeeklyReportExporter : IWeeklyReportExporter
         var path = Path.Combine(outputDirectory, CreateFileName(range, identity));
         using var workbook = new XLWorkbook();
         var sheet = workbook.Worksheets.Add("業務週報");
+        sheet.Style.Font.FontName = FontName;
 
         sheet.Range("A1:C1").Merge();
         sheet.Cell("A1").Value = $"{identity.ReportTitle} {range.Start:yyyy/MM/dd}〜{range.End:yyyy/MM/dd}";
@@ -37,6 +39,7 @@ public sealed class ClosedXmlWeeklyReportExporter : IWeeklyReportExporter
         sheet.Cell("D2").Value = identity.EmployeeName;
         sheet.Range("A1:D2").Style.Font.Bold = true;
         sheet.Range("A1:D2").Style.Font.FontSize = 12;
+        sheet.Range("A1:D2").Style.Font.FontName = FontName;
         sheet.Range("D1:D2").Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Left;
 
         var headers = new[]
@@ -54,6 +57,7 @@ public sealed class ClosedXmlWeeklyReportExporter : IWeeklyReportExporter
         var headerRange = sheet.Range("A3:D3");
         headerRange.Style.Font.Bold = true;
         headerRange.Style.Font.FontColor = XLColor.White;
+        headerRange.Style.Font.FontName = FontName;
         headerRange.Style.Fill.BackgroundColor = HeaderFillColor;
         headerRange.Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
         headerRange.Style.Border.InsideBorder = XLBorderStyleValues.Thin;
@@ -70,7 +74,7 @@ public sealed class ClosedXmlWeeklyReportExporter : IWeeklyReportExporter
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var dateLines = new List<string> { "社内", day.Date.ToString("yyyy/MM/dd") };
+            var dateLines = new List<string> { CategoryLabel(day.Category), day.Date.ToString("yyyy/MM/dd") };
             if (!string.IsNullOrEmpty(surname))
             {
                 dateLines.Add(surname);
@@ -98,6 +102,7 @@ public sealed class ClosedXmlWeeklyReportExporter : IWeeklyReportExporter
 
         var reportRange = sheet.Range(3, 1, lastRow, 4);
         sheet.Range(1, 1, lastRow, 4).Style.Alignment.WrapText = true;
+        sheet.Range(1, 1, lastRow, 4).Style.Font.FontName = FontName;
         reportRange.Style.Alignment.Vertical = XLAlignmentVerticalValues.Top;
         reportRange.Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
         reportRange.Style.Border.InsideBorder = XLBorderStyleValues.Thin;
@@ -116,6 +121,9 @@ public sealed class ClosedXmlWeeklyReportExporter : IWeeklyReportExporter
         workbook.SaveAs(path);
         return Task.FromResult(path);
     }
+
+    private static string CategoryLabel(string category) =>
+        category == ReportCategories.External ? "社外" : "社内";
 }
 
 public static class ReportFileNameSanitizer

@@ -41,7 +41,7 @@ public sealed class StorageTests
             tables);
 
         command.CommandText = "PRAGMA user_version;";
-        Assert.Equal(3L, Convert.ToInt64(await command.ExecuteScalarAsync()));
+        Assert.Equal(4L, Convert.ToInt64(await command.ExecuteScalarAsync()));
     }
 
     [Fact]
@@ -88,8 +88,9 @@ public sealed class StorageTests
         Assert.Contains("needs_confirmation", names);
         Assert.Contains("confirmation_question", names);
         Assert.Contains("origin", names);
+        Assert.Contains("category", names);
         columns.CommandText = "PRAGMA user_version;";
-        Assert.Equal(3L, Convert.ToInt64(await columns.ExecuteScalarAsync()));
+        Assert.Equal(4L, Convert.ToInt64(await columns.ExecuteScalarAsync()));
     }
 
     [Fact]
@@ -182,7 +183,105 @@ public sealed class StorageTests
 
         await using var version = upgraded.CreateCommand();
         version.CommandText = "PRAGMA user_version;";
-        Assert.Equal(3L, Convert.ToInt64(await version.ExecuteScalarAsync()));
+        Assert.Equal(4L, Convert.ToInt64(await version.ExecuteScalarAsync()));
+    }
+
+    [Fact]
+    public async Task Migration_upgrades_a_version_three_database_to_report_category()
+    {
+        using var temporary = new TemporaryDirectory();
+        var path = Path.Combine(temporary.Path, "category-upgrade.db");
+        var factory = new SqliteConnectionFactory(new FixedDatabasePathProvider(path));
+        await using (var connection = factory.Create())
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                CREATE TABLE quick_notes (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    created_at TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    deleted_at TEXT NULL
+                );
+                CREATE TABLE source_events (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    occurred_at TEXT NOT NULL,
+                    source_type TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    body TEXT NOT NULL,
+                    evidence TEXT NOT NULL,
+                    source_ref TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    content_hash TEXT NOT NULL,
+                    collected_at TEXT NOT NULL
+                );
+                CREATE TABLE report_candidates (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    week_start TEXT NOT NULL,
+                    work_date TEXT NOT NULL,
+                    work_item TEXT NOT NULL,
+                    activity TEXT NOT NULL,
+                    result_or_next TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    selected INTEGER NOT NULL,
+                    edited INTEGER NOT NULL,
+                    source_event_ids_json TEXT NOT NULL,
+                    needs_confirmation INTEGER NOT NULL DEFAULT 0,
+                    confirmation_question TEXT NULL,
+                    origin TEXT NOT NULL DEFAULT 'local'
+                );
+                CREATE TABLE settings (
+                    key TEXT NOT NULL PRIMARY KEY,
+                    value_encrypted TEXT NOT NULL
+                );
+                CREATE TABLE meeting_sessions (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    participants TEXT NOT NULL DEFAULT '',
+                    kind TEXT NOT NULL,
+                    started_at TEXT NOT NULL,
+                    ended_at TEXT NULL,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE meeting_lines (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    session_id TEXT NOT NULL REFERENCES meeting_sessions(id),
+                    line_no INTEGER NOT NULL,
+                    marker TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    logged_at TEXT NOT NULL
+                );
+                CREATE TABLE meeting_summaries (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    session_id TEXT NOT NULL REFERENCES meeting_sessions(id),
+                    formatted_json TEXT NOT NULL,
+                    summary_line TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                PRAGMA user_version = 3;
+                """;
+            await command.ExecuteNonQueryAsync();
+        }
+
+        await new SqliteDatabaseInitializer(factory).InitializeAsync();
+        await new SqliteDatabaseInitializer(factory).InitializeAsync();
+
+        await using var upgraded = factory.Create();
+        await upgraded.OpenAsync();
+        await using var columns = upgraded.CreateCommand();
+        columns.CommandText = "PRAGMA table_info(report_candidates);";
+        var names = new List<string>();
+        await using (var reader = await columns.ExecuteReaderAsync())
+        {
+            while (await reader.ReadAsync()) names.Add(reader.GetString(1));
+        }
+        Assert.Contains("category", names);
+
+        await using var version = upgraded.CreateCommand();
+        version.CommandText = "PRAGMA user_version;";
+        Assert.Equal(4L, Convert.ToInt64(await version.ExecuteScalarAsync()));
     }
 
     [Fact]

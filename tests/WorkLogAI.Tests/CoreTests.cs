@@ -45,6 +45,7 @@ public sealed class CoreTests
         Assert.Equal("手動メモ", row.WorkItem);
         Assert.Equal(note.Text, row.Activity);
         Assert.Equal(string.Empty, row.ResultOrNext);
+        Assert.Equal(ReportCategories.Internal, row.Category);
     }
 
     [Theory]

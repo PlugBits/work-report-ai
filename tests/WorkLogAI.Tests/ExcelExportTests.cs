@@ -194,6 +194,59 @@ public sealed class ExcelExportTests
     }
 
     [Fact]
+    public async Task Export_splits_a_mixed_day_into_separate_internal_and_external_rows()
+    {
+        using var temporary = new TemporaryDirectory();
+        var exporter = new ClosedXmlWeeklyReportExporter();
+        var range = new WeekRange(new DateOnly(2026, 7, 27), new DateOnly(2026, 8, 2));
+        var rows = new[]
+        {
+            new ReportRow(new DateOnly(2026, 7, 28), "社内案件", "社内活動", ""),
+            new ReportRow(new DateOnly(2026, 7, 28), "社外案件", "社外活動", "", ReportCategories.External)
+        };
+
+        var path = await exporter.ExportAsync(
+            range,
+            rows,
+            temporary.Path,
+            new ReportIdentity("サンプル株式会社", "山田 太郎"));
+
+        using var workbook = new XLWorkbook(path);
+        var sheet = workbook.Worksheet("業務週報");
+
+        Assert.Equal("社内\n2026/07/28\n山田", sheet.Cell("A4").GetString());
+        Assert.Equal("① 社内案件", sheet.Cell("B4").GetString());
+        Assert.Equal("社外\n2026/07/28\n山田", sheet.Cell("A5").GetString());
+        Assert.Equal("① 社外案件", sheet.Cell("B5").GetString());
+        Assert.Equal(string.Empty, sheet.Cell("A6").GetString());
+    }
+
+    [Fact]
+    public async Task Export_sets_noto_sans_jp_font_on_title_and_data_cells()
+    {
+        using var temporary = new TemporaryDirectory();
+        var exporter = new ClosedXmlWeeklyReportExporter();
+        var range = new WeekRange(new DateOnly(2026, 7, 27), new DateOnly(2026, 8, 2));
+        var rows = new[]
+        {
+            new ReportRow(new DateOnly(2026, 7, 28), "手動メモ", "最初", "")
+        };
+
+        var path = await exporter.ExportAsync(
+            range,
+            rows,
+            temporary.Path,
+            new ReportIdentity("サンプル株式会社", "山田 太郎"));
+
+        using var workbook = new XLWorkbook(path);
+        var sheet = workbook.Worksheet("業務週報");
+
+        Assert.Equal("Noto Sans JP", sheet.Cell("A1").Style.Font.FontName);
+        Assert.Equal("Noto Sans JP", sheet.Cell("A4").Style.Font.FontName);
+        Assert.Equal("Noto Sans JP", sheet.Cell("C4").Style.Font.FontName);
+    }
+
+    [Fact]
     public async Task Export_uses_custom_report_title_in_file_name_and_title_cell()
     {
         using var temporary = new TemporaryDirectory();

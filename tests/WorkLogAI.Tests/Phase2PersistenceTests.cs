@@ -104,6 +104,7 @@ public sealed class Phase2PersistenceTests
         Assert.False(candidate.Selected);
         Assert.Equal([source.Id], candidate.SourceEventIds);
         Assert.Contains("implemented local parser", candidate.Activity);
+        Assert.Equal(ReportCategories.Internal, candidate.Category);
     }
 
     [Fact]
@@ -198,6 +199,46 @@ public sealed class Phase2PersistenceTests
         var loaded = Assert.Single(await repository.ListAsync(candidate.WeekStart));
         Assert.Equal(candidate.Id, loaded.Id);
         Assert.Equal([sourceId], loaded.SourceEventIds);
+    }
+
+    [Fact]
+    public async Task Candidate_category_round_trips_for_internal_and_external_rows()
+    {
+        using var temporary = new TemporaryDirectory();
+        var factory = await CreateDatabaseAsync(temporary, "candidate-category.db");
+        var repository = new SqliteReportCandidateRepository(factory);
+        var weekStart = new DateOnly(2026, 7, 27);
+        var internalCandidate = new ReportCandidate(
+            Guid.NewGuid(),
+            weekStart,
+            new DateOnly(2026, 7, 28),
+            "社内案件",
+            "社内活動",
+            "",
+            "pending",
+            .9,
+            true,
+            false,
+            [Guid.NewGuid()]);
+        var externalCandidate = new ReportCandidate(
+            Guid.NewGuid(),
+            weekStart,
+            new DateOnly(2026, 7, 29),
+            "社外案件",
+            "社外活動",
+            "",
+            "pending",
+            .9,
+            true,
+            false,
+            [Guid.NewGuid()],
+            Category: ReportCategories.External);
+
+        await repository.ReplaceWeekAsync(weekStart, [internalCandidate, externalCandidate]);
+        var loaded = (await repository.ListAsync(weekStart)).ToDictionary(item => item.Id);
+
+        Assert.Equal(ReportCategories.Internal, loaded[internalCandidate.Id].Category);
+        Assert.Equal(ReportCategories.External, loaded[externalCandidate.Id].Category);
     }
 
     [Fact]

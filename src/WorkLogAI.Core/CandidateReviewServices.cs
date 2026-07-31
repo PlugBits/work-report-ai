@@ -64,7 +64,8 @@ public sealed class CandidateMergeService
                 right.ConfirmationQuestion ?? string.Empty),
             Origin = left.Origin == CandidateOrigins.Manual || right.Origin == CandidateOrigins.Manual
                 ? CandidateOrigins.Manual
-                : left.Origin
+                : left.Origin,
+            Category = left.Category
         };
     }
 
@@ -134,6 +135,7 @@ public sealed class CandidateReportMapper
                 candidate.WorkDate,
                 candidate.WorkItem,
                 candidate.Activity,
-                candidate.ResultOrNext))
+                candidate.ResultOrNext,
+                candidate.Category))
             .ToArray();
 }
