@@ -55,7 +55,8 @@ public sealed record ReportCandidate(
     IReadOnlyList<Guid> SourceEventIds,
     bool NeedsConfirmation = false,
     string? ConfirmationQuestion = null,
-    string Origin = CandidateOrigins.Local);
+    string Origin = CandidateOrigins.Local,
+    string Category = ReportCategories.Internal);
 
 public static class CandidateOrigins
 {
@@ -64,11 +65,18 @@ public static class CandidateOrigins
     public const string Manual = "manual";
 }
 
+public static class ReportCategories
+{
+    public const string Internal = "internal";
+    public const string External = "external";
+}
+
 public sealed record ReportRow(
     DateOnly Date,
     string WorkItem,
     string Activity,
-    string ResultOrNext);
+    string ResultOrNext,
+    string Category = ReportCategories.Internal);
 
 public readonly record struct WeekRange(DateOnly Start, DateOnly End)
 {

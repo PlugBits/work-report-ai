@@ -308,7 +308,9 @@ the same class of behavior an amended Git commit already produces for
 Embedded SQL migrations run in version order inside a transaction according to
 `PRAGMA user_version`. `001_initial.sql` creates the four specification tables,
 `002_phase3_review.sql` upgrades existing Phase 1–2 databases without rewriting the
-initial migration, and `003_meeting_mode.sql` adds the three 議事録モード tables:
+initial migration, `003_meeting_mode.sql` adds the three 議事録モード tables, and
+`004_report_category.sql` (schema v4) adds `report_candidates.category` (社内/社外,
+default `internal`) for the review-time category selector:
 
 - `quick_notes`
 - `source_events`
@@ -377,16 +379,20 @@ the earlier single "company / employee" title cell). Row 3 is the header row
 (日時/項目・案件・目標金額/活動内容/結果・決定事項・今後の課題) with a blue fill and
 white bold text (replacing the earlier light-gray header). `WorkLogAI.Core`'s
 pure `DailyReportGrouper` groups the already-filtered, chronologically sorted
-`ReportRow`s into one `DailyReportRow` per calendar day and numbers each day's
-items in arrival order (circled digits ①–⑳ via `DailyReportGrouper.CircledNumber`,
-falling back to `(21)`, `(22)`, … beyond that); the exporter renders exactly one
-sheet row per day from that grouping — never one row per `ReportRow` — with the
-日時 cell holding three stacked lines (the fixed literal 社内, the date, and the
-employee's surname), the 項目/活動内容 cells holding one numbered line per item,
-and the 結果・決定事項 cell holding only the numbered items whose result text is
-non-blank. Rows are wrapped, bordered, and configured for landscape printing at
-one page wide; the data area has no merged cells now that grouping happens by
-day rather than by consecutive same-date rows.
+`ReportRow`s into one `DailyReportRow` per (calendar day, 社内/社外 category) pair —
+so a day with both categories selected produces two independently numbered
+rows, internal before external — and numbers each group's items in arrival order
+(circled digits ①–⑳ via `DailyReportGrouper.CircledNumber`, falling back to
+`(21)`, `(22)`, … beyond that); the exporter renders exactly one sheet row per
+group from that grouping — never one row per `ReportRow` — with the 日時 cell
+holding three stacked lines (社内 or 社外 per the row's category, the date, and
+the employee's surname), the 項目/活動内容 cells holding one numbered line per
+item, and the 結果・決定事項 cell holding only the numbered items whose result
+text is non-blank. Rows are wrapped, bordered, and configured for landscape
+printing at one page wide; the data area has no merged cells now that grouping
+happens by day rather than by consecutive same-date rows. The worksheet's
+default font is set to Noto Sans JP right after worksheet creation and again
+explicitly on the title, header, and data ranges.
 
 ## Security and deferred integrations
 

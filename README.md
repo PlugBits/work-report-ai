@@ -104,6 +104,15 @@ corners) applied consistently across all windows.
 - The weekly review's **Excel出力** checks coverage of selected rows only and, if
   any Monday–Friday day has zero selected candidates, shows a Yes/No confirmation
   listing the blank weekdays before exporting. Weekends never trigger it.
+- Each candidate card has a **区分** (社内/社外) selector next to **状態**,
+  defaulting to 社内 for every source (local, AI-generated, and manually added
+  rows); the user classifies it during review, there is no auto-classification. A
+  day with both 社内 and 社外 rows selected splits into two rows in the exported
+  Excel sheet, each independently numbered ①②③….
+- Exported Excel sheets and the app UI use **Noto Sans JP** as the base font,
+  falling back to Yu Gothic UI/Segoe UI when it is not installed; the Excel file
+  renders with the intended font only on a machine where Noto Sans JP is
+  installed — otherwise the viewer's own fallback font is used.
 - The weekly review window shows a **今週のクイック入力** sidebar listing the review
   week's quick notes for reference, and the **記入状況** coverage bar's day chips now
   double as a filter — clicking a day (or 全て) narrows the cards and notes shown to

@@ -14,7 +14,8 @@ namespace WorkLogAI.App;
 public static class AppTheme
 {
     private static readonly SolidColorBrush WindowBackground = new(Color.FromRgb(0xF7, 0xF8, 0xFA));
-    private static readonly FontFamily BaseFontFamily = new("Yu Gothic UI, Segoe UI, sans-serif");
+    private static readonly FontFamily BaseFontFamily =
+        new("Noto Sans JP, Yu Gothic UI, Segoe UI, sans-serif");
 
     public static void Apply(Window window)
     {

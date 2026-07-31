@@ -44,7 +44,7 @@ public sealed class SqliteReportCandidateRepository(SqliteConnectionFactory conn
         command.CommandText = """
             SELECT id, week_start, work_date, work_item, activity, result_or_next,
                    status, confidence, selected, edited, source_event_ids_json,
-                   needs_confirmation, confirmation_question, origin
+                   needs_confirmation, confirmation_question, origin, category
             FROM report_candidates
             WHERE week_start = $weekStart
             ORDER BY work_date, id;
@@ -69,7 +69,8 @@ public sealed class SqliteReportCandidateRepository(SqliteConnectionFactory conn
                 sourceIds,
                 reader.GetInt64(11) == 1,
                 reader.IsDBNull(12) ? null : reader.GetString(12),
-                reader.GetString(13)));
+                reader.GetString(13),
+                reader.GetString(14)));
         }
 
         return candidates;
@@ -198,11 +199,11 @@ public sealed class SqliteReportCandidateRepository(SqliteConnectionFactory conn
             INSERT {(ignoreConflict ? "OR IGNORE " : string.Empty)}INTO report_candidates
                 (id, week_start, work_date, work_item, activity, result_or_next,
                  status, confidence, selected, edited, source_event_ids_json,
-                 needs_confirmation, confirmation_question, origin)
+                 needs_confirmation, confirmation_question, origin, category)
             VALUES
                 ($id, $weekStart, $workDate, $workItem, $activity, $result,
                  $status, $confidence, $selected, $edited, $sourceIds,
-                 $needsConfirmation, $confirmationQuestion, $origin);
+                 $needsConfirmation, $confirmationQuestion, $origin, $category);
             """;
         insert.Parameters.AddWithValue("$id", candidate.Id.ToString("D"));
         insert.Parameters.AddWithValue("$weekStart", candidate.WeekStart.ToString("yyyy-MM-dd"));
@@ -220,6 +221,7 @@ public sealed class SqliteReportCandidateRepository(SqliteConnectionFactory conn
             "$confirmationQuestion",
             (object?)candidate.ConfirmationQuestion ?? DBNull.Value);
         insert.Parameters.AddWithValue("$origin", candidate.Origin);
+        insert.Parameters.AddWithValue("$category", candidate.Category);
         await insert.ExecuteNonQueryAsync(cancellationToken);
     }
 }
