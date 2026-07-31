@@ -523,7 +523,11 @@ explicitly on the title, header, and data ranges; it ships with Windows 10
 consecutive `DailyReportRow`s whose `Date` differs, the render core inserts one
 completely empty spacer row — same-date 社内/社外 rows stay adjacent with no
 spacer between them. A single blanket border range covers the header plus the
-entire data area, spacer rows included, so the grid never breaks; spacer rows
+entire data area, spacer rows included, so the grid never breaks; after that
+blanket pass, each spacer row's top edge and the preceding date's last content
+row's bottom edge are individually cleared back to no border, so the spacer
+visually merges into the block above it while its own bottom edge (the
+boundary before the next date) and left/right edges stay thin. Spacer rows
 get no explicit height, so they stay ordinary rows that `AdjustToContents` and
 any later manual auto-fit re-run in Excel size like any other empty row. Print
 area and freeze-row math account for the extra spacer rows automatically since

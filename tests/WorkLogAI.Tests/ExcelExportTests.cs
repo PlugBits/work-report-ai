@@ -40,9 +40,14 @@ public sealed class ExcelExportTests
         Assert.Equal("① 最初", sheet.Cell("C4").GetString());
 
         // Different-date spacer row: completely empty but still part of the
-        // continuous bordered grid, like every other row.
+        // continuous bordered grid, like every other row. Its top edge merges
+        // with the preceding date's block (no line), while its own bottom
+        // edge — the boundary before the next date — stays.
         Assert.Equal(string.Empty, sheet.Cell("A5").GetString());
         Assert.Equal(XLBorderStyleValues.Thin, sheet.Cell("A5").Style.Border.LeftBorder);
+        Assert.Equal(XLBorderStyleValues.None, sheet.Cell("A4").Style.Border.BottomBorder);
+        Assert.Equal(XLBorderStyleValues.None, sheet.Cell("A5").Style.Border.TopBorder);
+        Assert.Equal(XLBorderStyleValues.Thin, sheet.Cell("A5").Style.Border.BottomBorder);
 
         Assert.Equal("社内\n2026/07/30\n山田", sheet.Cell("A6").GetString());
         Assert.Equal("① 二番目", sheet.Cell("C6").GetString());
@@ -251,22 +256,30 @@ public sealed class ExcelExportTests
         using var workbook = new XLWorkbook(path);
         var sheet = workbook.Worksheet("業務週報");
 
-        // Same-date 社内/社外 pair (rows 4-5) stays adjacent: no spacer between them.
+        // Same-date 社内/社外 pair (rows 4-5) stays adjacent: no spacer between them,
+        // and the internal line between them is untouched.
         Assert.Equal("社内\n2026/07/28\n山田", sheet.Cell("A4").GetString());
         Assert.Equal("社外\n2026/07/28\n山田", sheet.Cell("A5").GetString());
         Assert.NotEqual(XLBorderStyleValues.None, sheet.Cell("A5").Style.Border.LeftBorder);
+        Assert.Equal(XLBorderStyleValues.Thin, sheet.Cell("A4").Style.Border.BottomBorder);
+        Assert.Equal(XLBorderStyleValues.Thin, sheet.Cell("A5").Style.Border.TopBorder);
 
         // Exactly one blank spacer row (row 6) before the next date. It is an
-        // ordinary row within the continuous bordered grid: fully bordered,
-        // completely empty cells, and no forced height (so post-export
-        // auto-fit treats it like any other empty row).
+        // ordinary row within the continuous bordered grid: fully bordered on
+        // its left/right/bottom edges, completely empty cells, and no forced
+        // height (so post-export auto-fit treats it like any other empty
+        // row). Its top edge — and the previous date's last content row's
+        // bottom edge — are cleared so the spacer visually merges with the
+        // block above it; the bottom edge (the boundary before the next
+        // date) stays.
         Assert.Equal(string.Empty, sheet.Cell("A6").GetString());
         Assert.Equal(string.Empty, sheet.Cell("B6").GetString());
         Assert.Equal(string.Empty, sheet.Cell("C6").GetString());
         Assert.Equal(string.Empty, sheet.Cell("D6").GetString());
         Assert.Equal(XLBorderStyleValues.Thin, sheet.Cell("A6").Style.Border.LeftBorder);
         Assert.Equal(XLBorderStyleValues.Thin, sheet.Cell("D6").Style.Border.RightBorder);
-        Assert.Equal(XLBorderStyleValues.Thin, sheet.Cell("A6").Style.Border.TopBorder);
+        Assert.Equal(XLBorderStyleValues.None, sheet.Cell("A5").Style.Border.BottomBorder);
+        Assert.Equal(XLBorderStyleValues.None, sheet.Cell("A6").Style.Border.TopBorder);
         Assert.Equal(XLBorderStyleValues.Thin, sheet.Cell("A6").Style.Border.BottomBorder);
         Assert.True(sheet.Row(6).Height >= 10);
 
