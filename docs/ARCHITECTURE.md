@@ -517,8 +517,17 @@ item, and the 結果・決定事項 cell holding only the numbered items whose r
 text is non-blank. Rows are wrapped, bordered, and configured for landscape
 printing at one page wide; the data area has no merged cells now that grouping
 happens by day rather than by consecutive same-date rows. The worksheet's
-default font is set to Noto Sans JP right after worksheet creation and again
-explicitly on the title, header, and data ranges.
+default font is set to BIZ UDPゴシック right after worksheet creation and again
+explicitly on the title, header, and data ranges; it ships with Windows 10
+1809+ and Windows 11, so no separate install is needed. Between each pair of
+consecutive `DailyReportRow`s whose `Date` differs, the render core inserts one
+completely empty, borderless spacer row (height 6pt, set after
+`AdjustToContents` so auto-fit doesn't override it) — same-date 社内/社外 rows
+stay adjacent with no spacer between them. Borders are applied per contiguous
+same-date block rather than as one blanket range across the whole data area, so
+the spacer rows stay borderless; the header row keeps its own border. Print
+area and freeze-row math account for the extra spacer rows automatically since
+they are folded into the same running row counter as the data rows.
 
 `ClosedXmlWeeklyReportExporter.ExportAsync` and the newer `ExportMonthAsync` share
 one private `RenderAsync(titleText, fileName, rows, outputDirectory, identity, ct)`
