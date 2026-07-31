@@ -19,6 +19,7 @@ public sealed class AppServices
         Notes = new SqliteQuickNoteRepository(connections);
         SourceEvents = new SqliteSourceEventRepository(connections);
         Candidates = new SqliteReportCandidateRepository(connections);
+        Meetings = new SqliteMeetingRepository(connections);
         SettingsStore = new SqliteSettingsStore(connections);
         Settings = new AppSettingsService(SettingsStore);
         Exporter = new ClosedXmlWeeklyReportExporter();
@@ -33,6 +34,8 @@ public sealed class AppServices
     public ISourceEventRepository SourceEvents { get; }
 
     public IReportCandidateRepository Candidates { get; }
+
+    public IMeetingRepository Meetings { get; }
 
     public IWeeklyReportExporter Exporter { get; }
 
@@ -74,7 +77,10 @@ public sealed class AppServices
             new ManualQuickNoteCollector(Notes),
             new LocalGitCollector(settings.LocalRepositoryPaths, new BoundedProcessRunner()),
             new CodexSessionCollector(settings.CodexSessionFolder, new CodexSessionParser()),
-            new RecentFileCollector(settings.RecentFileFolders)
+            new RecentFileCollector(settings.RecentFileFolders),
+            // Always on: reads only already-formatted meeting summaries from the
+            // local SQLite database, no external configuration required.
+            new MeetingSummaryCollector(Meetings)
         };
 
         HttpClient? graphHttpClient = null;
@@ -162,6 +168,19 @@ public sealed class AppServices
             await Candidates.SaveGeneratedAsync(range.Start, merged, cancellationToken);
         }
         return result;
+    }
+
+    public async Task<MeetingFormatResult> FormatMeetingAsync(
+        MeetingSession session,
+        IReadOnlyList<MeetingLine> includedLines,
+        CancellationToken cancellationToken = default)
+    {
+        var settings = await Settings.LoadAsync(cancellationToken);
+        using var httpClient = new HttpClient();
+        var client = new MeetingFormatClient(httpClient, Credentials);
+        return await client.FormatAsync(
+            new MeetingFormatRequest(session, includedLines, settings.OpenAiModel),
+            cancellationToken);
     }
 }
 

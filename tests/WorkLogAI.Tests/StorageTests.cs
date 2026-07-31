@@ -41,7 +41,7 @@ public sealed class StorageTests
             tables);
 
         command.CommandText = "PRAGMA user_version;";
-        Assert.Equal(2L, Convert.ToInt64(await command.ExecuteScalarAsync()));
+        Assert.Equal(3L, Convert.ToInt64(await command.ExecuteScalarAsync()));
     }
 
     [Fact]
@@ -89,7 +89,100 @@ public sealed class StorageTests
         Assert.Contains("confirmation_question", names);
         Assert.Contains("origin", names);
         columns.CommandText = "PRAGMA user_version;";
-        Assert.Equal(2L, Convert.ToInt64(await columns.ExecuteScalarAsync()));
+        Assert.Equal(3L, Convert.ToInt64(await columns.ExecuteScalarAsync()));
+    }
+
+    [Fact]
+    public async Task Migration_upgrades_a_version_two_database_to_meeting_mode()
+    {
+        using var temporary = new TemporaryDirectory();
+        var path = Path.Combine(temporary.Path, "meeting-upgrade.db");
+        var factory = new SqliteConnectionFactory(new FixedDatabasePathProvider(path));
+        await using (var connection = factory.Create())
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                CREATE TABLE quick_notes (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    created_at TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    deleted_at TEXT NULL
+                );
+                CREATE TABLE source_events (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    occurred_at TEXT NOT NULL,
+                    source_type TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    body TEXT NOT NULL,
+                    evidence TEXT NOT NULL,
+                    source_ref TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    content_hash TEXT NOT NULL,
+                    collected_at TEXT NOT NULL
+                );
+                CREATE TABLE report_candidates (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    week_start TEXT NOT NULL,
+                    work_date TEXT NOT NULL,
+                    work_item TEXT NOT NULL,
+                    activity TEXT NOT NULL,
+                    result_or_next TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    selected INTEGER NOT NULL,
+                    edited INTEGER NOT NULL,
+                    source_event_ids_json TEXT NOT NULL,
+                    needs_confirmation INTEGER NOT NULL DEFAULT 0,
+                    confirmation_question TEXT NULL,
+                    origin TEXT NOT NULL DEFAULT 'local'
+                );
+                CREATE TABLE settings (
+                    key TEXT NOT NULL PRIMARY KEY,
+                    value_encrypted TEXT NOT NULL
+                );
+                PRAGMA user_version = 2;
+                """;
+            await command.ExecuteNonQueryAsync();
+        }
+
+        await new SqliteDatabaseInitializer(factory).InitializeAsync();
+        await new SqliteDatabaseInitializer(factory).InitializeAsync();
+
+        await using var upgraded = factory.Create();
+        await upgraded.OpenAsync();
+        await using var tables = upgraded.CreateCommand();
+        tables.CommandText = """
+            SELECT name
+            FROM sqlite_master
+            WHERE type = 'table'
+              AND name IN ('meeting_sessions', 'meeting_lines', 'meeting_summaries')
+            ORDER BY name;
+            """;
+        var names = new List<string>();
+        await using (var reader = await tables.ExecuteReaderAsync())
+        {
+            while (await reader.ReadAsync()) names.Add(reader.GetString(0));
+        }
+        Assert.Equal(new[] { "meeting_lines", "meeting_sessions", "meeting_summaries" }, names);
+
+        await using var indexes = upgraded.CreateCommand();
+        indexes.CommandText = """
+            SELECT name
+            FROM sqlite_master
+            WHERE type = 'index'
+              AND name IN ('ix_meeting_lines_session_line', 'ix_meeting_summaries_session');
+            """;
+        var indexNames = new List<string>();
+        await using (var reader = await indexes.ExecuteReaderAsync())
+        {
+            while (await reader.ReadAsync()) indexNames.Add(reader.GetString(0));
+        }
+        Assert.Equal(2, indexNames.Count);
+
+        await using var version = upgraded.CreateCommand();
+        version.CommandText = "PRAGMA user_version;";
+        Assert.Equal(3L, Convert.ToInt64(await version.ExecuteScalarAsync()));
     }
 
     [Fact]
@@ -302,6 +395,55 @@ public sealed class StorageTests
         await store.SetAsync(AppSettingKeys.ReportTitle, "   ");
         var blank = await service.LoadAsync();
         Assert.Equal("業務週報", blank.ReportTitle);
+    }
+
+    [Fact]
+    public async Task Meeting_settings_round_trip_and_default_to_enabled_raw_log_and_hotkey()
+    {
+        using var temporary = new TemporaryDirectory();
+        var factory = new SqliteConnectionFactory(
+            new FixedDatabasePathProvider(Path.Combine(temporary.Path, "meeting-settings.db")));
+        await new SqliteDatabaseInitializer(factory).InitializeAsync();
+        var service = new AppSettingsService(new SqliteSettingsStore(factory));
+
+        var unset = await service.LoadAsync();
+        Assert.Equal(string.Empty, unset.MeetingOutputFolder);
+        Assert.True(unset.MeetingIncludeRawLog);
+        Assert.True(unset.MeetingHotkeyEnabled);
+
+        var expected = new AppSettingsSnapshot(
+            "サンプル株式会社",
+            "山田 太郎",
+            DayOfWeek.Monday,
+            temporary.Path,
+            MeetingOutputFolder: @"C:\meetings",
+            MeetingIncludeRawLog: false,
+            MeetingHotkeyEnabled: false);
+
+        await service.SaveAsync(expected);
+        var actual = await service.LoadAsync();
+
+        Assert.Equal(@"C:\meetings", actual.MeetingOutputFolder);
+        Assert.False(actual.MeetingIncludeRawLog);
+        Assert.False(actual.MeetingHotkeyEnabled);
+    }
+
+    [Fact]
+    public async Task Meeting_setting_keys_are_not_treated_as_secrets()
+    {
+        using var temporary = new TemporaryDirectory();
+        var factory = new SqliteConnectionFactory(
+            new FixedDatabasePathProvider(Path.Combine(temporary.Path, "meeting-key-policy.db")));
+        await new SqliteDatabaseInitializer(factory).InitializeAsync();
+        var store = new SqliteSettingsStore(factory);
+
+        await store.SetAsync(AppSettingKeys.MeetingOutputFolder, @"C:\meetings");
+        await store.SetAsync(AppSettingKeys.MeetingIncludeRawLog, "true");
+        await store.SetAsync(AppSettingKeys.MeetingHotkeyEnabled, "false");
+        await store.SetAsync(AppSettingKeys.MeetingWindowPlacement, "0,0,420,520");
+
+        Assert.Equal(@"C:\meetings", await store.GetAsync(AppSettingKeys.MeetingOutputFolder));
+        Assert.Equal("0,0,420,520", await store.GetAsync(AppSettingKeys.MeetingWindowPlacement));
     }
 
     [Fact]

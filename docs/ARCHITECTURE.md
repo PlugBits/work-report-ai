@@ -11,11 +11,13 @@
   embedded SQL migration, default/injectable database paths, isolated sample-data
   seeding, ClosedXML export, local Git/Codex/file collectors, Credential Manager
   interop, bounded prompt construction, the Responses API client, MSAL-based
-  Microsoft Graph sign-in and token caching, and the Outlook mail/calendar REST
-  collectors.
-- `WorkLogAI.App` (`net8.0-windows`) is the WPF tray host. It owns the Win32 hotkey,
-  quick capture, weekly history, the weekday reminder timer, settings, and UI
-  composition.
+  Microsoft Graph sign-in and token caching, the Outlook mail/calendar REST
+  collectors, meeting SQLite persistence and Markdown writer, the meeting AI
+  formatting client/payload builder, and the meeting-to-weekly-source collector.
+- `WorkLogAI.App` (`net8.0-windows`) is the WPF tray host. It owns the Win32
+  hotkeys (quick capture and 議事録モード), quick capture, weekly history, the
+  weekday reminder timer, settings, meeting capture/session-chooser/send-preview
+  windows, and UI composition.
 - `WorkLogAI.Tests` verifies boundaries and file output without using the production
   data directory.
 
@@ -198,17 +200,126 @@ Settings gain four new non-secret keys: `graph.client_id`, `graph.tenant_id`
 require no schema change — the existing `settings` key/value table already stores
 arbitrary non-secret preferences.
 
+## 議事録モード (meeting minutes) flow
+
+```text
+Ctrl+Alt+M / tray 議事録を開始
+      |
+      v
+MeetingSessionChooserWindow (only if drafts exist) -- resume or new
+      |
+      v
+MeetingCaptureWindow -- IMeetingRepository --> SQLite meeting_sessions / meeting_lines
+      |
+      | (会議終了, or the AI整形 button at any time while capturing)
+      v
+  no API key / user declines ------------------------------------------------+
+      |                                                                      |
+  API key present, user opts in                                             |
+      v                                                                      |
+MeetingSendPreviewWindow (mandatory; every line, checked by default;         |
+recomputes model/line-count/approx-KB from MeetingFormatPayloadBuilder       |
+on every checkbox toggle; no setting bypasses it)                           |
+      |                                                                      |
+      v                                                                      |
+MeetingFormatPayloadBuilder (SafeTextSanitizer + local-path redaction        |
++ 256 KiB UTF-8 hard cap, no truncation)                                     |
+      |                                                                      |
+      v                                                                      |
+MeetingFormatClient -- POST /v1/responses (store:false, no tools,            |
+strict text.format JSON Schema) --> MeetingFormatEnvelope                    |
+      |                                                                      |
+      v                                                                      |
+MeetingFormatValidator (independent: summary length, strict due-date         |
+format, nonblank text) --> MeetingFormattedResult                            |
+      |                                                                      |
+      v                                                                      |
+IMeetingRepository.SaveSummaryAsync (new meeting_summaries row,              |
+session.status = formatted; confirms overwrite if a summary exists)          |
+      |                                                                      v
+      v                                                          MeetingMarkdownBuilder(formatted: null)
+MeetingMarkdownBuilder(formatted) --------------------------------------------+
+      |
+      v
+Obsidian .md (front matter + 概要/決定事項/宿題/論点[+生ログ]) -- source of truth
+
+separately, on demand:
+MeetingSummaryCollector -- IMeetingRepository.ListFormattedInRangeAsync -->
+  SourceEvent(sourceType="meeting", body=summary_line only, confidence 0.8)
+      |
+      v
+existing LocalCollectionCoordinator dedup/mapping pipeline --> completed,
+pre-selected 会議・打合せ candidate
+```
+
+Capture is a thin, immediate-persist loop: `MeetingLineParser` (pure) strips a
+leading `@`/`＠` (宿題) or `!`/`！` (決定) marker and `MeetingCaptureWindow` appends
+the parsed line to SQLite on `Enter` — there is no separate "save" step, and closing
+the window (✕) simply leaves the session `draft` for `MeetingSessionChooserWindow`
+to resume later. `MeetingMarkdownBuilder` (pure, `WorkLogAI.Core`) renders only the
+raw-log section while `formatted` is null, and all sections (概要/決定事項/宿題/論点
+plus an optional 生ログ) once a `MeetingFormattedResult` exists; `MeetingMarkdownWriter`
+(`WorkLogAI.Infrastructure`) writes it with the same sanitized, collision-suffixed
+(`_2`, `_3`, ...) filename scheme as the weekly Excel export (`MeetingFileNameBuilder`).
+
+AI formatting mirrors the Phase 3 Responses client end-to-end: `MeetingFormatClient`
+posts `store:false`, no `tools`, and a strict `text.format` JSON Schema
+(`additionalProperties:false` everywhere, every property required, nullability via
+`type` unions for `owner`/`due`), aggregates `output_text` across all output items,
+and converts refusal/incomplete/error-status/empty-output/malformed-JSON into a
+generic Japanese message that never echoes the request or response body — the same
+contract `OpenAiResponsesClientTests` already established for the weekly generator.
+Unlike weekly generation, the entire request payload is built by one pure,
+independently testable class, `MeetingFormatPayloadBuilder`: it sanitizes title,
+participants, and every line's text through `SafeTextSanitizer`, further redacts
+local Windows/Unix paths, composes each line as `MeetingLineFormatter`'s shared
+"HH:mm [宿題|決定] text" rendering, and never includes the session's GUID. The same
+builder computes the exact payload `MeetingSendPreviewWindow` shows the user and the
+byte count `MeetingFormatClient` checks against the 256 KiB cap, so the preview is
+never lying about what would be sent. Even though the model's structured output is
+already constrained by the strict JSON Schema, `MeetingFormatValidator` re-validates
+it independently and purely (schemas cannot enforce "summary_line is <=120 chars and
+actually non-blank" or "due, if present, parses as a strict `yyyy-MM-dd` date") —
+any violation returns a Japanese error and leaves the raw log completely untouched.
+
+`IMeetingRepository.SaveSummaryAsync` inserts a new `meeting_summaries` row (prior
+rows for a re-formatted session are kept, not overwritten — `GetLatestSummaryAsync`
+returns the newest by `created_at`) and sets `meeting_sessions.status = 'formatted'`
+in the same transaction. `MeetingSummaryCollector` is the only path from a formatted
+meeting into the weekly pipeline: it calls `ListFormattedInRangeAsync` and maps each
+`(session, summary)` pair to one `SourceEvent` carrying **only** the summary line
+plus the session's title and start time — raw `meeting_lines` are never read by this
+collector, which is what guarantees they can never reach `AiPromptBuilder` (it only
+ever serializes `SourceEvent.Title`/`Body`/`Evidence`). `LocalSourceEventMapper` maps
+`SourceTypes.Meeting` to work item **会議・打合せ**, status `completed` (a formatted
+meeting already happened and was explicitly reviewed by the user — unlike every
+other local source, which stays `pending`), and pre-selects it like a manual note.
+`AppServices.CollectLocalSourcesAsync` always includes `MeetingSummaryCollector`
+since it only reads local SQLite and needs no external configuration.
+
+Known limitation: re-formatting a session whose week has already run weekly
+collection can leave the earlier summary's mapped candidate present until the user
+deselects it, since content-hash deduplication keeps both source events distinct —
+the same class of behavior an amended Git commit already produces for
+`LocalGitCollector`.
+
 ## Persistence
 
 Embedded SQL migrations run in version order inside a transaction according to
-`PRAGMA user_version`. `001_initial.sql` creates the four specification tables and
+`PRAGMA user_version`. `001_initial.sql` creates the four specification tables,
 `002_phase3_review.sql` upgrades existing Phase 1–2 databases without rewriting the
-initial migration:
+initial migration, and `003_meeting_mode.sql` adds the three 議事録モード tables:
 
 - `quick_notes`
 - `source_events`
 - `report_candidates`
 - `settings`
+- `meeting_sessions` (header: title, participants, kind, started_at, ended_at,
+  status, created_at)
+- `meeting_lines` (session_id, line_no, marker, text, logged_at; indexed on
+  `(session_id, line_no)`)
+- `meeting_summaries` (session_id, formatted_json, summary_line, created_at;
+  indexed on `session_id` — one row per AI-formatting run, oldest rows kept)
 
 Connections are short-lived and created from an injected path provider. Soft delete
 sets `quick_notes.deleted_at`; reopen sets it back to `NULL`.
@@ -220,7 +331,11 @@ Data. Tests inject temporary database paths.
 
 The WPF process stays alive without a main window and exposes a Windows notification
 area icon. A message-only `HwndSource` registers `Ctrl+Alt+W` using
-`RegisterHotKey`; disposal always calls `UnregisterHotKey`.
+`RegisterHotKey`; disposal always calls `UnregisterHotKey`. `Ctrl+Alt+M` for
+議事録モード registers the same way, through the same now-parameterized
+`GlobalHotKey`, but only when `meeting.hotkey_enabled` (default on) is true at
+`OnStartup` — toggling the setting takes effect after a restart, since hotkey
+(un)registration only happens once per process lifetime, not on every settings save.
 
 The capture window has one single-line `TextBox` and uses `SizeToContent.Height`
 instead of a fixed outer height, so the client area stays usable regardless of
@@ -310,3 +425,19 @@ entirely under `--sample-data`, and always before `IDatabaseInitializer.Initiali
 opens the first connection — a plain `File.Copy` is only safe to reason about while
 no connection (and therefore no WAL/journal file) exists yet. All failures are
 caught and sent to `ErrorLog`; a backup problem never blocks startup.
+
+議事録モード's outbound AI request is a fourth, separately governed kind of network
+call, still explicit and user-approved at two points: the OpenAI API key check
+(same `WorkLog AI/OpenAI API Key` Credential Manager target Phase 3 uses — no new
+secret store) and, mandatorily, the per-line `MeetingSendPreviewWindow`, which no
+setting can skip. `MeetingFormatPayloadBuilder` sanitizes every text field through
+`SafeTextSanitizer`, further redacts local filesystem paths, and never includes the
+session GUID; `MeetingFormatClient` enforces a hard 256 KiB UTF-8 cap on that exact
+payload before sending, failing with a Japanese error rather than truncating
+silently — meeting logs are expected to never legitimately reach that size. Meeting
+capture, edit, and delete failures write only a context label to `ErrorLog`, never
+line text, title, or participants, matching the discipline already established for
+notes, candidates, and mail. Weekly generation still only ever sees a formatted
+meeting's `summary_line` (via `SourceEvent.Body`) — raw `meeting_lines` rows are
+read solely by `MeetingCaptureWindow`/`MeetingMarkdownBuilder`/`MeetingFormatClient`
+and never by anything in the weekly collection or generation path.

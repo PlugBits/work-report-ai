@@ -140,6 +140,66 @@ Covers the Phase 4 spec items (Microsoft Graph sign-in, sent mail, calendar,
 collection-scope settings); it does not add any other Microsoft 365 surface (no
 Teams, OneDrive, or additional mailboxes).
 
+## 議事録モード — meeting minutes mode
+
+- [x] Migration `003_meeting_mode.sql` idempotently adds `meeting_sessions`,
+      `meeting_lines`, and `meeting_summaries`
+- [x] `Ctrl + Alt + M` hotkey via a now-parameterized `GlobalHotKey`, independently
+      toggled from `Ctrl + Alt + W`, gated by `meeting.hotkey_enabled` (default on,
+      restart required to take effect)
+- [x] `MeetingCaptureWindow`: title/participants/kind header, Enter-confirmed
+      timestamped lines with no separate save step, inline double-click edit and
+      `Delete` removal, remembered window placement
+- [x] Pure `MeetingLineParser` recognizes leading `@`/`＠` (宿題) and `!`/`！`
+      (決定) markers; anything else is an unmarked note
+- [x] Draft persistence and resume via `MeetingSessionChooserWindow`; closing (✕)
+      leaves a session as `draft`, **会議終了** closes it
+- [x] Obsidian-ready Markdown export (`MeetingMarkdownBuilder` + `MeetingMarkdownWriter`):
+      YAML front matter, 概要/決定事項/宿題/論点[+生ログ] sections, sanitized
+      collision-suffixed (`_2`, `_3`, ...) filenames, offer to open the file
+- [x] Meeting text (title/participants/line content) is excluded from `ErrorLog` —
+      only context labels are logged on failure
+- [x] `MeetingFormatClient` mirrors `OpenAiResponsesClient`: `store:false`, no
+      tools, strict `text.format` JSON Schema (`additionalProperties:false`
+      everywhere, every property required, nullable `owner`/`due` via `type`
+      unions), all-item `output_text` aggregation, bounded response read, and safe
+      refusal/incomplete/error/malformed handling that never echoes request or
+      response bodies
+- [x] Mandatory line-level send preview (`MeetingSendPreviewWindow`) — every line,
+      checked by default, header shows model/line-count/approximate outbound KB
+      recomputed on every checkbox toggle; no setting can bypass it; unchecked
+      lines are excluded from the payload only, SQLite is never touched
+- [x] Pure, independently testable `MeetingFormatPayloadBuilder`: sanitizes and
+      redacts local paths from title/participants/line text, composes the shared
+      `MeetingLineFormatter` marker labels, excludes unchecked lines, and computes
+      the exact byte count both the preview and the client rely on
+- [x] Independent `MeetingFormatValidator`: nonblank/`<=120`-char `summary_line`,
+      strict `yyyy-MM-dd` `TryParseExact` for `due` (null allowed), nonblank
+      decision/action-item/topic text — a schema-satisfying but otherwise invalid
+      response still fails with a Japanese error and leaves the raw log untouched
+- [x] Hard 256 KiB UTF-8 payload cap enforced before any network call, with a
+      Japanese error and no silent truncation
+- [x] Summary persistence: `SaveSummaryAsync` (new row + `status = formatted` in
+      one transaction), `GetLatestSummaryAsync`, `ListFormattedInRangeAsync`;
+      overwrite confirmation (**既存の整形結果を上書きしますか？**) before
+      re-saving a session that already has a summary
+- [x] `MeetingFormattedResultJson` is the single camelCase, case-insensitive
+      round-trip contract for `meeting_summaries.formatted_json`
+- [x] Weekly integration: `SourceTypes.Meeting`, `MeetingSummaryCollector` (always
+      on, reads only local SQLite, confidence fixed at 0.8), `LocalSourceEventMapper`
+      maps it to work item **会議・打合せ**, status `completed` (not `pending` —
+      unlike every other local source), pre-selected like a manual note
+- [x] Only a formatted session's `summary_line` (never raw `meeting_lines`) ever
+      reaches the weekly AI generation prompt
+- [x] Known, documented limitation: re-formatting after weekly collection can leave
+      an older summary's mapped candidate present until deselected (content-hash
+      dedup keeps both events), the same class of behavior as an amended Git commit
+- [x] Automated tests: payload builder (exclusion, sanitization, marker labels,
+      size calc), validator, mocked-handler client (request shape, refusal/
+      incomplete/error/malformed handling, oversized-payload short-circuit,
+      multi-item aggregation), repository summary methods, mapper, collector, and
+      `MeetingFormattedResultJson` round-trip — no live API test
+
 ## Explicitly not implemented after Phase 4
 
 - [ ] Phase 5: installer, crash recovery, and automatic updates
@@ -147,7 +207,9 @@ Teams, OneDrive, or additional mailboxes).
 Auto-start, the local error log, and the weekly database backup — the Phase 5
 operational-quality items that overlap with usability work — are already
 implemented above. There are no GitHub network calls, installer, or auto-update
-code. The secret stores are Windows Credential Manager (OpenAI API key only) and
-the DPAPI-encrypted MSAL token cache file (Microsoft Graph tokens only). The only
-external calls are the explicit user-approved OpenAI Responses request and the
-explicit, toggle-gated Microsoft Graph REST reads.
+code. The secret stores are Windows Credential Manager (OpenAI API key only, shared
+by weekly generation and 議事録モード AI整形) and the DPAPI-encrypted MSAL token
+cache file (Microsoft Graph tokens only). The only external calls are the explicit
+user-approved OpenAI Responses request for weekly generation, the same Responses
+endpoint for meeting AI整形 (gated by its own mandatory per-line send preview), and
+the explicit, toggle-gated Microsoft Graph REST reads.

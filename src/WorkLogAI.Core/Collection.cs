@@ -105,12 +105,18 @@ public sealed class LocalSourceEventMapper
             SourceTypes.File => "更新ファイル",
             SourceTypes.OutlookMail => "メール対応",
             SourceTypes.Calendar => "会議・予定",
+            SourceTypes.Meeting => "会議・打合せ",
             _ => "ローカル記録"
         };
 
-        var activity = sourceEvent.SourceType == SourceTypes.Manual
+        var activity = sourceEvent.SourceType is SourceTypes.Manual or SourceTypes.Meeting
             ? sourceEvent.Body
             : JoinNonBlank(sourceEvent.Title, sourceEvent.Body);
+
+        // A formatted meeting record reflects a meeting that already happened and
+        // was explicitly reviewed by the user (see MeetingSummaryCollector) — unlike
+        // every other local source, it is completed work, not a pending candidate.
+        var status = sourceEvent.SourceType == SourceTypes.Meeting ? "completed" : "pending";
 
         return new ReportCandidate(
             StableIdentity.CreateGuid($"candidate\n{weekStart:yyyy-MM-dd}\n{sourceEvent.Id:D}"),
@@ -119,9 +125,9 @@ public sealed class LocalSourceEventMapper
             workItem,
             activity,
             string.Empty,
-            "pending",
+            status,
             sourceEvent.Confidence,
-            sourceEvent.SourceType == SourceTypes.Manual,
+            sourceEvent.SourceType is SourceTypes.Manual or SourceTypes.Meeting,
             false,
             [sourceEvent.Id]);
     }
@@ -138,6 +144,7 @@ public static class SourceTypes
     public const string File = "file";
     public const string OutlookMail = "outlook_mail";
     public const string Calendar = "calendar";
+    public const string Meeting = "meeting";
 }
 
 public static class SourceEventFactory

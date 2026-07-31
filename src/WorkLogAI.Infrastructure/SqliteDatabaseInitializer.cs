@@ -10,7 +10,8 @@ public sealed class SqliteDatabaseInitializer(SqliteConnectionFactory connection
     private static readonly (long Version, string Resource)[] Migrations =
     [
         (1, "WorkLogAI.Infrastructure.Migrations.001_initial.sql"),
-        (2, "WorkLogAI.Infrastructure.Migrations.002_phase3_review.sql")
+        (2, "WorkLogAI.Infrastructure.Migrations.002_phase3_review.sql"),
+        (3, "WorkLogAI.Infrastructure.Migrations.003_meeting_mode.sql")
     ];
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)

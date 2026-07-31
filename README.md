@@ -2,7 +2,8 @@
 
 WorkLog AI is a Windows-only .NET 8 WPF tray application for capturing short work
 notes, collecting safe local work metadata, and exporting a manual weekly report.
-This repository currently implements Phases 1 through 4.
+This repository currently implements Phases 1 through 4, plus a 議事録モード
+(meeting minutes mode) addition (see below).
 
 ## Phase 1 features
 
@@ -130,6 +131,59 @@ This repository currently implements Phases 1 through 4.
   enable checkboxes for mail and calendar collection, and sign-in/sign-out buttons
   with a signed-in-user status line.
 
+## 議事録モード (meeting minutes mode)
+
+- `Ctrl + Alt + M` (independently toggled from `Ctrl + Alt + W`, and registered only
+  once at startup — changing the **議事録ホットキー** checkbox in settings takes
+  effect after a restart) or the tray's **議事録を開始** opens meeting capture. If
+  draft sessions already exist, `MeetingSessionChooserWindow` offers to resume one
+  or start fresh first.
+- `MeetingCaptureWindow` is a small always-on-top window: 件名/相手先・参加者/種別
+  (会議・来客・電話) header, a single-line input that appends a timestamped line to
+  SQLite on `Enter` (no separate save step), inline double-click edit and `Delete`
+  removal, and a remembered window position/size across sessions.
+- A leading `@`/`＠` marks a line as 宿題 (todo/action item); a leading `!`/`！`
+  marks it as 決定 (decision); anything else is an unmarked note. Closing the window
+  (✕) leaves the session as a draft for later resume; **会議終了** closes it.
+- **AI整形**: with an OpenAI API key configured, either the **AI整形** button or the
+  **会議終了** follow-up prompt runs the same flow — a **mandatory** line-level send
+  preview (`MeetingSendPreviewWindow`) lists every captured line with a checkbox
+  (all checked by default), the target model name, the line count, and the
+  approximate outbound UTF-8 size, recomputed on every toggle. No setting bypasses
+  this preview. Unchecked lines are excluded from the request payload only — SQLite
+  is never modified by the preview. On confirmed send, `MeetingFormatClient` mirrors
+  the Phase 3 Responses client (`store:false`, no tools, strict `text.format` JSON
+  Schema, bounded response read, safe refusal/incomplete/error/malformed handling)
+  and the model's structured output is independently re-validated (summary length,
+  strict `yyyy-MM-dd` due dates, nonblank text) before it is trusted. The built
+  payload is hard-capped at 256 KiB UTF-8 with a clear Japanese error and no silent
+  truncation — meeting logs are expected to never be that large. Re-formatting a
+  session that already has a summary asks **既存の整形結果を上書きしますか？** before
+  overwriting.
+- **Markdown export**: an Obsidian-ready `.md` file (YAML front matter with
+  date/type/participants/tags, `## 概要`/`## 決定事項`/`## 宿題`/`## 論点` sections
+  once a summary exists, and an optional `## 生ログ` raw-log section per settings)
+  is written to the configured 議事録出力フォルダ, with the same sanitized,
+  collision-suffixed (`_2`, `_3`, ...) filename scheme as the weekly export, and an
+  offer to open the file afterward. Markdown is the durable record for Obsidian; if
+  no output folder is configured, the app says so but still keeps the summary in
+  SQLite.
+- **Weekly report integration**: every AI-formatted session becomes one local source
+  event (source type `meeting`, confidence fixed at 0.8) via `MeetingSummaryCollector`,
+  mapped to work item **会議・打合せ**, status `completed` (a formatted meeting
+  already happened and was explicitly reviewed — unlike every other local source, it
+  is not `pending`), and pre-selected like a manual note. **Only the summary_line
+  plus the session title/time ever leave `IMeetingRepository` this way — raw meeting
+  lines are never read by the collector and can therefore never reach the weekly AI
+  generation prompt.** This collector is always on; it reads only local SQLite.
+- Settings add 議事録出力フォルダ (blank disables export), 生ログをMDに同梱
+  (default on), and 議事録ホットキー有効化 (default on, restart required to take
+  effect).
+- Known limitation: re-formatting a session after its week has already run weekly
+  collection can leave the earlier summary's mapped candidate present until the
+  user deselects it — content-hash deduplication keeps both source events, the same
+  class of behavior as an amended Git commit already produces.
+
 ### Microsoft 365 setup
 
 Microsoft Graph access requires an Azure AD app registration: a public client with
@@ -158,7 +212,7 @@ The `WorkLogAI.App` WPF project (`net8.0-windows`) only builds on Windows. On
 non-Windows hosts, build and run `WorkLogAI.Tests` with
 `-p:EnableWindowsTargeting=true`, e.g.
 `dotnet test tests/WorkLogAI.Tests/WorkLogAI.Tests.csproj -p:EnableWindowsTargeting=true`.
-The suite currently has 132 tests.
+The suite currently has 239 tests.
 
 Create the specified self-contained, single-file Windows build with:
 
@@ -235,6 +289,17 @@ The outbound AI request contains sanitized event IDs, dates, source types, title
 summaries, and reduced evidence only. It excludes `sourceRef`, full local paths,
 source code, diffs, function output, full threads, logs, credentials, and API keys.
 No transmission happens during startup, background operation, or settings save.
+
+Meeting text (session title/participants/line content) is sanitized through
+`SafeTextSanitizer` plus local-path redaction before ever leaving the process for
+AI formatting, is never included in the session id, is capped at 256 KiB UTF-8 with
+no silent truncation, and is only sent at all after the user explicitly approves it
+line-by-line in the mandatory `MeetingSendPreviewWindow`. Meeting capture, edit, and
+delete operations log only a context label to `ErrorLog` on failure — never the
+line text, title, or participants — matching the existing note/candidate/mail
+logging discipline. Only a formatted session's `summary_line` (never raw lines)
+reaches the weekly AI generation prompt, via the same `SourceEvent`
+title/body/evidence fields every other local source already uses.
 
 See [architecture](docs/ARCHITECTURE.md) and the
 [phase checklist](docs/PHASE_CHECKLIST.md).

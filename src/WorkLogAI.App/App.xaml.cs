@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Input;
 using System.Windows.Threading;
 using Forms = System.Windows.Forms;
 using WorkLogAI.Core;
@@ -8,8 +9,12 @@ namespace WorkLogAI.App;
 
 public partial class App : System.Windows.Application
 {
+    private const int QuickCaptureHotKeyId = 0x5741;
+    private const int MeetingHotKeyId = 0x574D;
+
     private Forms.NotifyIcon? _trayIcon;
     private GlobalHotKey? _hotKey;
+    private GlobalHotKey? _meetingHotKey;
     private AppServices? _services;
     private DispatcherTimer? _reminderTimer;
     private int _collectionRunning;
@@ -27,7 +32,7 @@ public partial class App : System.Windows.Application
             _services = new AppServices(_sampleMode);
             await _services.InitializeAsync();
             CreateTrayIcon(_sampleMode);
-            _hotKey = new GlobalHotKey(ShowQuickCapture);
+            _hotKey = new GlobalHotKey(Key.W, QuickCaptureHotKeyId, ShowQuickCapture);
 
             if (!_hotKey.Register())
             {
@@ -36,6 +41,20 @@ public partial class App : System.Windows.Application
                     "WorkLog AI",
                     MessageBoxButton.OK,
                     MessageBoxImage.Warning);
+            }
+
+            var startupSettings = await _services.Settings.LoadAsync();
+            if (startupSettings.MeetingHotkeyEnabled)
+            {
+                _meetingHotKey = new GlobalHotKey(Key.M, MeetingHotKeyId, ShowMeetingMode);
+                if (!_meetingHotKey.Register())
+                {
+                    MessageBox.Show(
+                        "Ctrl+Alt+M を登録できませんでした。別のアプリで使用されている可能性があります。",
+                        "WorkLog AI",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Warning);
+                }
             }
 
             StartReminderTimer();
@@ -56,6 +75,7 @@ public partial class App : System.Windows.Application
     {
         _reminderTimer?.Stop();
         _hotKey?.Dispose();
+        _meetingHotKey?.Dispose();
         if (_trayIcon is not null)
         {
             _trayIcon.Visible = false;
@@ -76,6 +96,7 @@ public partial class App : System.Windows.Application
 
         var menu = new Forms.ContextMenuStrip();
         menu.Items.Add("クイック入力", null, (_, _) => ShowQuickCapture());
+        menu.Items.Add("議事録を開始", null, (_, _) => ShowMeetingMode());
         menu.Items.Add("候補を生成…", null, async (_, _) => await GenerateCandidatesAsync());
         menu.Items.Add("今週の記録を見る", null, (_, _) => ShowHistory());
         menu.Items.Add("設定", null, (_, _) => ShowSettings());
@@ -160,6 +181,48 @@ public partial class App : System.Windows.Application
             window.Show();
             window.Activate();
         });
+    }
+
+    private void ShowMeetingMode() => _ = ShowMeetingModeAsync();
+
+    private async Task ShowMeetingModeAsync()
+    {
+        if (_services is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var drafts = await _services.Meetings.ListSessionsAsync(MeetingStatus.Draft);
+            MeetingSession? session = null;
+            if (drafts.Count > 0)
+            {
+                var chooser = new MeetingSessionChooserWindow(drafts);
+                if (chooser.ShowDialog() != true)
+                {
+                    return;
+                }
+
+                session = chooser.SelectedSession;
+            }
+
+            Dispatcher.Invoke(() =>
+            {
+                var window = new MeetingCaptureWindow(_services, session);
+                window.Show();
+                window.Activate();
+            });
+        }
+        catch (Exception exception)
+        {
+            ErrorLog.Log("App.MeetingMode", exception);
+            MessageBox.Show(
+                $"議事録モードを開始できませんでした。\n{exception.Message}",
+                "WorkLog AI",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
     }
 
     private async Task GenerateCandidatesAsync()
