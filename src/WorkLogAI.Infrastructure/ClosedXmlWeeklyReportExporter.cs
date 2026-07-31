@@ -113,45 +113,51 @@ public sealed class ClosedXmlWeeklyReportExporter : IWeeklyReportExporter
         const int MinimumBlockRows = 4;
 
         var rowNumber = 4;
-        var blockBoundaries = new List<(int UpperRow, int LowerRow)>();
+        var blockLastRows = new List<int>();
 
         foreach (var day in dailyRows)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var contentRowNumber = rowNumber;
-
-            sheet.Cell(contentRowNumber, 1).Value =
-                $"{day.Date:yyyy/MM/dd}\n({JapaneseWeekday(day.Date.DayOfWeek)})";
-
-            var workItemLines = day.Items
-                .Select(item => $"{DailyReportGrouper.CircledNumber(item.Number)} {item.WorkItem}");
-            sheet.Cell(contentRowNumber, 2).Value = string.Join("\n", workItemLines);
-
-            var activityLines = day.Items
-                .Select(item => $"{DailyReportGrouper.CircledNumber(item.Number)} {item.Activity}");
-            sheet.Cell(contentRowNumber, 3).Value = string.Join("\n", activityLines);
-
-            var resultLines = day.Items
-                .Where(item => !string.IsNullOrWhiteSpace(item.ResultOrNext))
-                .Select(item => $"{DailyReportGrouper.CircledNumber(item.Number)} {item.ResultOrNext}");
-            sheet.Cell(contentRowNumber, 4).Value = string.Join("\n", resultLines);
-
-            rowNumber++;
-
-            // Every day's block — its content row plus blank rows — spans a
-            // uniform minimum of MinimumBlockRows sheet rows, so each day
-            // occupies the same visual height regardless of item count. The
-            // blank rows are ordinary empty rows within the continuous
-            // bordered grid, with no forced height, so they behave like any
-            // other row under Excel's auto-fit.
-            const int ContentRowCount = 1;
-            var blankRowCount = Math.Max(1, MinimumBlockRows - ContentRowCount);
-            for (var index = 0; index < blankRowCount; index++)
+            // One sheet row per item, so the 項目/活動内容/結果 cells for a given
+            // item always sit on the same row and stay aligned once text
+            // wraps — no more packing a day's items into one multi-line cell.
+            for (var itemIndex = 0; itemIndex < day.Items.Count; itemIndex++)
             {
-                blockBoundaries.Add((rowNumber - 1, rowNumber));
+                var item = day.Items[itemIndex];
+                var label = DailyReportGrouper.CircledNumber(item.Number);
+
+                if (itemIndex == 0)
+                {
+                    // The date/weekday cell appears once, on the block's
+                    // first row only; every other row in the block leaves
+                    // column A empty.
+                    sheet.Cell(rowNumber, 1).Value =
+                        $"{day.Date:yyyy/MM/dd}\n({JapaneseWeekday(day.Date.DayOfWeek)})";
+                }
+
+                sheet.Cell(rowNumber, 2).Value = $"{label} {item.WorkItem}";
+                sheet.Cell(rowNumber, 3).Value = $"{label} {item.Activity}";
+                if (!string.IsNullOrWhiteSpace(item.ResultOrNext))
+                {
+                    sheet.Cell(rowNumber, 4).Value = $"{label} {item.ResultOrNext}";
+                }
+
                 rowNumber++;
             }
+
+            // Every day's block — its item rows plus trailing blank rows —
+            // spans a uniform minimum of MinimumBlockRows sheet rows, so
+            // each day occupies at least the same visual height regardless
+            // of item count, and always keeps at least one trailing blank
+            // row even when the item count already meets or exceeds the
+            // minimum. The blank rows are ordinary empty rows with no
+            // forced height, so they behave like any other row under
+            // Excel's auto-fit.
+            var blankRowCount = Math.Max(1, MinimumBlockRows - day.Items.Count);
+            rowNumber += blankRowCount;
+
+            blockLastRows.Add(rowNumber - 1);
         }
 
         var lastRow = Math.Max(3, rowNumber - 1);
@@ -160,21 +166,31 @@ public sealed class ClosedXmlWeeklyReportExporter : IWeeklyReportExporter
         sheet.Range(1, 1, lastRow, 4).Style.Alignment.WrapText = true;
         sheet.Range(1, 1, lastRow, 4).Style.Font.FontName = FontName;
         reportRange.Style.Alignment.Vertical = XLAlignmentVerticalValues.Top;
-        reportRange.Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
-        reportRange.Style.Border.InsideBorder = XLBorderStyleValues.Thin;
 
-        foreach (var (upperRow, lowerRow) in blockBoundaries)
+        // Constructive borders: draw only the lines that are actually
+        // wanted, never a blanket InsideBorder/OutsideBorder over the data
+        // area followed by clearing specific edges back off — that pattern
+        // renders inconsistently across viewers. Row 3 (the header) already
+        // got its own full thin border above; everything from row 4 down is
+        // built here from nothing.
+        if (lastRow >= 4)
         {
-            // Each day block (content row + its blank rows) is one visual
-            // cell region per column: drop the horizontal line at every
-            // internal boundary within the block. Both adjacent edges must
-            // be cleared — Excel renders a line if either side still has
-            // one. The block's own bottom edge (the last blank row's bottom
-            // border) is never touched here, so it stays Thin as the
-            // boundary before the next day's block; left/right borders are
-            // left untouched too.
-            sheet.Range(upperRow, 1, upperRow, 4).Style.Border.BottomBorder = XLBorderStyleValues.None;
-            sheet.Range(lowerRow, 1, lowerRow, 4).Style.Border.TopBorder = XLBorderStyleValues.None;
+            // Vertical lines: a left edge on every column A-D (i.e. the
+            // three internal dividers plus the table's outer left edge) and
+            // the table's outer right edge on column D, continuous for
+            // every row of every block — items and blanks alike.
+            sheet.Range(4, 1, lastRow, 4).Style.Border.LeftBorder = XLBorderStyleValues.Thin;
+            sheet.Range(4, 4, lastRow, 4).Style.Border.RightBorder = XLBorderStyleValues.Thin;
+
+            // Horizontal lines: only the last row of each day block gets a
+            // bottom edge — the boundary before the next day (and, for the
+            // final block, the bottom of the table). No other horizontal
+            // edge is drawn anywhere in the data area: not between item
+            // rows, not around blank rows.
+            foreach (var blockLastRow in blockLastRows)
+            {
+                sheet.Range(blockLastRow, 1, blockLastRow, 4).Style.Border.BottomBorder = XLBorderStyleValues.Thin;
+            }
         }
 
         sheet.Column(1).Width = 20.14; // 146 px
