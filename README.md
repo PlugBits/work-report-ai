@@ -90,6 +90,14 @@ This repository currently implements Phases 1 through 4, plus a 議事録モー�
   preparation, and AI generation, and the weekly review window that opens
   afterward shows an in-window generation-summary banner instead of a separate
   completion dialog.
+- Each candidate card in the weekly review has a **削除** button (confirmed via a
+  Yes/No dialog) that removes the row from the in-memory list; the removal is only
+  persisted when **編集を保存** or **Excel出力** runs next, matching how other edits
+  are saved. Rows added via **1行追加** are truly deleted, including their backing
+  `review-manual:`-tagged source event, so they cannot resurface. Rows sourced from
+  collected/AI data are only removed from this week's review — the confirmation
+  dialog notes that the next collection/generation run may surface them again since
+  the underlying record still exists.
 - The weekly review's **Excel出力** checks coverage of selected rows only and, if
   any Monday–Friday day has zero selected candidates, shows a Yes/No confirmation
   listing the blank weekdays before exporting. Weekends never trigger it.

@@ -118,6 +118,37 @@ public sealed class SqliteSourceEventRepository(SqliteConnectionFactory connecti
         return events;
     }
 
+    public async Task<int> DeleteByIdsAsync(
+        IReadOnlyCollection<Guid> ids,
+        CancellationToken cancellationToken = default)
+    {
+        var distinctIds = ids.Distinct().ToArray();
+        if (distinctIds.Length == 0)
+        {
+            return 0;
+        }
+
+        await using var connection = connectionFactory.Create();
+        await connection.OpenAsync(cancellationToken);
+        var deleted = 0;
+        const int chunkSize = 500;
+        foreach (var chunk in distinctIds.Chunk(chunkSize))
+        {
+            await using var command = connection.CreateCommand();
+            var parameters = chunk.Select((id, index) => (id, name: $"$id{index}")).ToArray();
+            command.CommandText = $"""
+                DELETE FROM source_events
+                WHERE id IN ({string.Join(",", parameters.Select(item => item.name))});
+                """;
+            foreach (var parameter in parameters)
+            {
+                command.Parameters.AddWithValue(parameter.name, parameter.id.ToString("D"));
+            }
+            deleted += await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        return deleted;
+    }
+
     private static string Format(DateTimeOffset value) =>
         value.ToString("O", CultureInfo.InvariantCulture);
 

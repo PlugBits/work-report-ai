@@ -23,6 +23,7 @@ public sealed class CandidateWindow : Window
         Orientation = Orientation.Horizontal,
         Margin = new Thickness(0, 0, 0, 10)
     };
+    private readonly List<Guid> _pendingDeletedReviewManualEventIds = [];
     private List<CandidateEditor> _items = [];
     private bool _lowConfidenceOnly;
 
@@ -196,10 +197,23 @@ public sealed class CandidateWindow : Window
         _ => "?"
     };
 
-    private static Border CreateCard(CandidateEditor item)
+    private Border CreateCard(CandidateEditor item)
     {
         var panel = new StackPanel();
-        panel.Children.Add(BoundCheckBox("採用", item, nameof(item.Selected)));
+        var headerRow = new DockPanel { LastChildFill = false, Margin = new Thickness(0, 0, 0, 6) };
+        var selected = BoundCheckBox("採用", item, nameof(item.Selected));
+        selected.Margin = new Thickness(0);
+        DockPanel.SetDock(selected, Dock.Left);
+        headerRow.Children.Add(selected);
+        var deleteButton = new Button
+        {
+            Content = "削除",
+            Padding = new Thickness(9, 3, 9, 3)
+        };
+        deleteButton.Click += (_, _) => _ = DeleteCardAsync(item);
+        DockPanel.SetDock(deleteButton, Dock.Right);
+        headerRow.Children.Add(deleteButton);
+        panel.Children.Add(headerRow);
         panel.Children.Add(Field("日付 (yyyy-MM-dd)", BoundTextBox(item, nameof(item.WorkDateText))));
         panel.Children.Add(Field("業務項目", BoundTextBox(item, nameof(item.WorkItem))));
         panel.Children.Add(Field("活動内容", BoundTextBox(item, nameof(item.Activity), true)));
@@ -309,6 +323,40 @@ public sealed class CandidateWindow : Window
         RenderCards();
     }
 
+    private async Task DeleteCardAsync(CandidateEditor item)
+    {
+        var isManual = item.Candidate.Origin == CandidateOrigins.Manual;
+        var message = isManual
+            ? "この行を削除しますか？"
+            : "この行を削除しますか？\nローカル記録やAI生成に由来する行は、次回の収集・生成で再び候補に載ることがあります。";
+        var answer = MessageBox.Show(
+            this,
+            message,
+            "WorkLog AI",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question);
+        if (answer != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        _items.Remove(item);
+
+        if (isManual && item.SourceEventIds.Count > 0)
+        {
+            var backingEvents = await _services.SourceEvents.GetByIdsAsync(item.SourceEventIds);
+            foreach (var sourceEvent in backingEvents)
+            {
+                if (sourceEvent.SourceRef.StartsWith("review-manual:", StringComparison.Ordinal))
+                {
+                    _pendingDeletedReviewManualEventIds.Add(sourceEvent.Id);
+                }
+            }
+        }
+
+        RenderCards();
+    }
+
     private async void SaveAsync(object sender, RoutedEventArgs e)
     {
         try
@@ -401,6 +449,21 @@ public sealed class CandidateWindow : Window
             return false;
         }
         await _services.Candidates.SaveReviewAsync(_range.Start, candidates);
+        if (_pendingDeletedReviewManualEventIds.Count > 0)
+        {
+            try
+            {
+                await _services.SourceEvents.DeleteByIdsAsync(_pendingDeletedReviewManualEventIds);
+            }
+            catch (Exception exception)
+            {
+                ErrorLog.Log("CandidateWindow.DeleteManualEvents", exception);
+            }
+            finally
+            {
+                _pendingDeletedReviewManualEventIds.Clear();
+            }
+        }
         _items = candidates.Select((item, index) =>
             new CandidateEditor(item, _items[index].EvidenceDescription)).ToList();
         return true;

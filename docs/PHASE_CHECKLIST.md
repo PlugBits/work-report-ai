@@ -99,6 +99,12 @@
       operational-quality item) under `%LOCALAPPDATA%\WorkLog AI\Backups`, run at
       startup before any DB connection opens, skipped in `--sample-data`, newest
       4 backups retained
+- [x] Weekly review card **削除** button removes a row (confirmed via Yes/No),
+      persisted on next save/export; manually added (`1行追加`) rows also delete
+      their backing `review-manual:` source event via
+      `ISourceEventRepository.DeleteByIdsAsync` so they cannot resurface, while
+      collected/AI-origin rows only leave this week's review and the confirmation
+      dialog says they may reappear on the next collection/generation run
 
 ## Phase 4 — Microsoft Graph mail and calendar
 

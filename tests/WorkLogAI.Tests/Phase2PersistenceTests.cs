@@ -36,6 +36,56 @@ public sealed class Phase2PersistenceTests
     }
 
     [Fact]
+    public async Task DeleteByIdsAsync_removes_only_targeted_events_and_tolerates_missing_or_empty_ids()
+    {
+        using var temporary = new TemporaryDirectory();
+        var factory = await CreateDatabaseAsync(temporary, "delete-events.db");
+        var repository = new SqliteSourceEventRepository(factory);
+        var occurredAt = new DateTimeOffset(2026, 7, 30, 10, 0, 0, TimeSpan.FromHours(-4));
+        var keep = SourceEventFactory.Create(
+            occurredAt,
+            SourceTypes.Git,
+            "commit-keep",
+            "changed: keep.txt",
+            "commit=keep",
+            "git:repo:keep",
+            .9,
+            occurredAt);
+        var removeFirst = SourceEventFactory.Create(
+            occurredAt,
+            SourceTypes.Manual,
+            "manual-1",
+            "manual row 1",
+            "manual",
+            "review-manual:1",
+            1,
+            occurredAt);
+        var removeSecond = SourceEventFactory.Create(
+            occurredAt,
+            SourceTypes.Manual,
+            "manual-2",
+            "manual row 2",
+            "manual",
+            "review-manual:2",
+            1,
+            occurredAt);
+        Assert.True(await repository.InsertIfNewAsync(keep));
+        Assert.True(await repository.InsertIfNewAsync(removeFirst));
+        Assert.True(await repository.InsertIfNewAsync(removeSecond));
+
+        Assert.Equal(0, await repository.DeleteByIdsAsync([]));
+        Assert.Equal(0, await repository.DeleteByIdsAsync([Guid.NewGuid()]));
+
+        var deleted = await repository.DeleteByIdsAsync(
+            [removeFirst.Id, removeSecond.Id, Guid.NewGuid()]);
+
+        Assert.Equal(2, deleted);
+        var remaining = await repository.ListAsync(
+            new WeekRange(new DateOnly(2026, 7, 27), new DateOnly(2026, 8, 2)));
+        Assert.Equal(keep.Id, Assert.Single(remaining).Id);
+    }
+
+    [Fact]
     public void Local_mapping_preserves_evidence_and_never_invents_completion_or_results()
     {
         var source = SourceEventFactory.Create(
