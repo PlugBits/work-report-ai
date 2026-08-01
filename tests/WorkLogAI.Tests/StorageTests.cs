@@ -41,7 +41,7 @@ public sealed class StorageTests
             tables);
 
         command.CommandText = "PRAGMA user_version;";
-        Assert.Equal(5L, Convert.ToInt64(await command.ExecuteScalarAsync()));
+        Assert.Equal(6L, Convert.ToInt64(await command.ExecuteScalarAsync()));
     }
 
     [Fact]
@@ -90,7 +90,7 @@ public sealed class StorageTests
         Assert.Contains("origin", names);
         Assert.Contains("category", names);
         columns.CommandText = "PRAGMA user_version;";
-        Assert.Equal(5L, Convert.ToInt64(await columns.ExecuteScalarAsync()));
+        Assert.Equal(6L, Convert.ToInt64(await columns.ExecuteScalarAsync()));
     }
 
     [Fact]
@@ -183,7 +183,7 @@ public sealed class StorageTests
 
         await using var version = upgraded.CreateCommand();
         version.CommandText = "PRAGMA user_version;";
-        Assert.Equal(5L, Convert.ToInt64(await version.ExecuteScalarAsync()));
+        Assert.Equal(6L, Convert.ToInt64(await version.ExecuteScalarAsync()));
     }
 
     [Fact]
@@ -281,7 +281,7 @@ public sealed class StorageTests
 
         await using var version = upgraded.CreateCommand();
         version.CommandText = "PRAGMA user_version;";
-        Assert.Equal(5L, Convert.ToInt64(await version.ExecuteScalarAsync()));
+        Assert.Equal(6L, Convert.ToInt64(await version.ExecuteScalarAsync()));
     }
 
     [Fact]
@@ -389,7 +389,140 @@ public sealed class StorageTests
 
         await using var version = upgraded.CreateCommand();
         version.CommandText = "PRAGMA user_version;";
-        Assert.Equal(5L, Convert.ToInt64(await version.ExecuteScalarAsync()));
+        Assert.Equal(6L, Convert.ToInt64(await version.ExecuteScalarAsync()));
+    }
+
+    [Fact]
+    public async Task Migration_upgrades_a_version_five_database_to_entities()
+    {
+        using var temporary = new TemporaryDirectory();
+        var path = Path.Combine(temporary.Path, "entities-upgrade.db");
+        var factory = new SqliteConnectionFactory(new FixedDatabasePathProvider(path));
+        await using (var connection = factory.Create())
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                CREATE TABLE quick_notes (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    created_at TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    deleted_at TEXT NULL
+                );
+                CREATE TABLE source_events (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    occurred_at TEXT NOT NULL,
+                    source_type TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    body TEXT NOT NULL,
+                    evidence TEXT NOT NULL,
+                    source_ref TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    content_hash TEXT NOT NULL,
+                    collected_at TEXT NOT NULL
+                );
+                CREATE TABLE report_candidates (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    week_start TEXT NOT NULL,
+                    work_date TEXT NOT NULL,
+                    work_item TEXT NOT NULL,
+                    activity TEXT NOT NULL,
+                    result_or_next TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    selected INTEGER NOT NULL,
+                    edited INTEGER NOT NULL,
+                    source_event_ids_json TEXT NOT NULL,
+                    needs_confirmation INTEGER NOT NULL DEFAULT 0,
+                    confirmation_question TEXT NULL,
+                    origin TEXT NOT NULL DEFAULT 'local',
+                    category TEXT NOT NULL DEFAULT 'internal'
+                );
+                CREATE TABLE settings (
+                    key TEXT NOT NULL PRIMARY KEY,
+                    value_encrypted TEXT NOT NULL
+                );
+                CREATE TABLE meeting_sessions (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    participants TEXT NOT NULL DEFAULT '',
+                    kind TEXT NOT NULL,
+                    started_at TEXT NOT NULL,
+                    ended_at TEXT NULL,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE meeting_lines (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    session_id TEXT NOT NULL REFERENCES meeting_sessions(id),
+                    line_no INTEGER NOT NULL,
+                    marker TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    logged_at TEXT NOT NULL
+                );
+                CREATE TABLE meeting_summaries (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    session_id TEXT NOT NULL REFERENCES meeting_sessions(id),
+                    formatted_json TEXT NOT NULL,
+                    summary_line TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE suppressed_source_refs (
+                    source_ref TEXT NOT NULL PRIMARY KEY,
+                    suppressed_at TEXT NOT NULL
+                );
+                PRAGMA user_version = 5;
+                """;
+            await command.ExecuteNonQueryAsync();
+        }
+
+        await new SqliteDatabaseInitializer(factory).InitializeAsync();
+        await new SqliteDatabaseInitializer(factory).InitializeAsync();
+
+        await using var upgraded = factory.Create();
+        await upgraded.OpenAsync();
+        await using var tables = upgraded.CreateCommand();
+        tables.CommandText = """
+            SELECT name
+            FROM sqlite_master
+            WHERE type = 'table'
+              AND name IN ('entities', 'entity_aliases')
+            ORDER BY name;
+            """;
+        var names = new List<string>();
+        await using (var reader = await tables.ExecuteReaderAsync())
+        {
+            while (await reader.ReadAsync()) names.Add(reader.GetString(0));
+        }
+        Assert.Equal(new[] { "entities", "entity_aliases" }, names);
+
+        await using var columns = upgraded.CreateCommand();
+        columns.CommandText = "PRAGMA table_info(entities);";
+        var columnNames = new List<string>();
+        await using (var reader = await columns.ExecuteReaderAsync())
+        {
+            while (await reader.ReadAsync()) columnNames.Add(reader.GetString(1));
+        }
+        Assert.Equal(
+            new[]
+            {
+                "id", "canonical_name", "kind", "occurrence_count", "first_seen_at",
+                "last_seen_at", "excluded", "created_at"
+            },
+            columnNames);
+
+        await using var index = upgraded.CreateCommand();
+        index.CommandText = """
+            SELECT name
+            FROM sqlite_master
+            WHERE type = 'index'
+              AND name = 'ix_entity_aliases_entity_id';
+            """;
+        Assert.Equal("ix_entity_aliases_entity_id", await index.ExecuteScalarAsync());
+
+        await using var version = upgraded.CreateCommand();
+        version.CommandText = "PRAGMA user_version;";
+        Assert.Equal(6L, Convert.ToInt64(await version.ExecuteScalarAsync()));
     }
 
     [Fact]
@@ -758,6 +891,73 @@ public sealed class StorageTests
 
         Assert.Equal(@"C:\meetings", await store.GetAsync(AppSettingKeys.MeetingOutputFolder));
         Assert.Equal("0,0,420,520", await store.GetAsync(AppSettingKeys.MeetingWindowPlacement));
+    }
+
+    [Fact]
+    public async Task Vault_settings_round_trip_and_default_to_the_feature_being_off()
+    {
+        using var temporary = new TemporaryDirectory();
+        var factory = new SqliteConnectionFactory(
+            new FixedDatabasePathProvider(Path.Combine(temporary.Path, "vault-settings.db")));
+        await new SqliteDatabaseInitializer(factory).InitializeAsync();
+        var service = new AppSettingsService(new SqliteSettingsStore(factory));
+
+        var unset = await service.LoadAsync();
+        Assert.Equal(string.Empty, unset.VaultDailyNotesFolder);
+        Assert.Equal(2, unset.VaultEntityLinkMinOccurrences);
+
+        var expected = new AppSettingsSnapshot(
+            "サンプル株式会社",
+            "山田 太郎",
+            DayOfWeek.Monday,
+            temporary.Path,
+            VaultDailyNotesFolder: @"C:\vault\daily",
+            VaultEntityLinkMinOccurrences: 5);
+
+        await service.SaveAsync(expected);
+        var actual = await service.LoadAsync();
+
+        Assert.Equal(@"C:\vault\daily", actual.VaultDailyNotesFolder);
+        Assert.Equal(5, actual.VaultEntityLinkMinOccurrences);
+    }
+
+    [Fact]
+    public async Task Vault_entity_link_min_occurrences_tolerantly_parses_and_enforces_a_minimum_of_one()
+    {
+        using var temporary = new TemporaryDirectory();
+        var factory = new SqliteConnectionFactory(
+            new FixedDatabasePathProvider(Path.Combine(temporary.Path, "vault-tolerant.db")));
+        await new SqliteDatabaseInitializer(factory).InitializeAsync();
+        var store = new SqliteSettingsStore(factory);
+        var service = new AppSettingsService(store);
+
+        await store.SetAsync(AppSettingKeys.VaultEntityLinkMinOccurrences, "not-a-number");
+        Assert.Equal(2, (await service.LoadAsync()).VaultEntityLinkMinOccurrences);
+
+        await store.SetAsync(AppSettingKeys.VaultEntityLinkMinOccurrences, "0");
+        Assert.Equal(2, (await service.LoadAsync()).VaultEntityLinkMinOccurrences);
+
+        await store.SetAsync(AppSettingKeys.VaultEntityLinkMinOccurrences, "-3");
+        Assert.Equal(2, (await service.LoadAsync()).VaultEntityLinkMinOccurrences);
+
+        await store.SetAsync(AppSettingKeys.VaultEntityLinkMinOccurrences, "1");
+        Assert.Equal(1, (await service.LoadAsync()).VaultEntityLinkMinOccurrences);
+    }
+
+    [Fact]
+    public async Task Vault_setting_keys_are_not_treated_as_secrets()
+    {
+        using var temporary = new TemporaryDirectory();
+        var factory = new SqliteConnectionFactory(
+            new FixedDatabasePathProvider(Path.Combine(temporary.Path, "vault-key-policy.db")));
+        await new SqliteDatabaseInitializer(factory).InitializeAsync();
+        var store = new SqliteSettingsStore(factory);
+
+        await store.SetAsync(AppSettingKeys.VaultDailyNotesFolder, @"C:\vault\daily");
+        await store.SetAsync(AppSettingKeys.VaultEntityLinkMinOccurrences, "3");
+
+        Assert.Equal(@"C:\vault\daily", await store.GetAsync(AppSettingKeys.VaultDailyNotesFolder));
+        Assert.Equal("3", await store.GetAsync(AppSettingKeys.VaultEntityLinkMinOccurrences));
     }
 
     [Fact]

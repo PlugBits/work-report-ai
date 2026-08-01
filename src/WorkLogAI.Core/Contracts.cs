@@ -318,3 +318,42 @@ public sealed record ReportIdentity(string CompanyName, string EmployeeName, str
 {
     public static ReportIdentity Default { get; } = new("会社名", "氏名");
 }
+
+/// <summary>
+/// The self-growing entity dictionary behind vault linking. Entities are matched
+/// by canonical name OR any existing alias, case-insensitively, so a caller never
+/// needs to know in advance whether a name is already known under a different
+/// spelling.
+/// </summary>
+public interface IEntityRepository
+{
+    /// <summary>
+    /// Merges each observation into the dictionary: a match (by canonical name or
+    /// any existing alias of the observation's canonical name or its own aliases)
+    /// increments <c>occurrence_count</c>, advances <c>last_seen_at</c> to
+    /// <paramref name="observedAt"/>, upgrades the stored kind only when it was
+    /// still <see cref="EntityKinds.Other"/>, and merges in any new aliases
+    /// (an alias that already belongs to a different entity is skipped — first
+    /// owner wins). A miss inserts a brand-new entity. All observations in the
+    /// batch are applied within a single transaction.
+    /// </summary>
+    Task UpsertObservationsAsync(
+        IReadOnlyList<EntityObservation> observations,
+        DateTimeOffset observedAt,
+        CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<WorkEntity>> ListAsync(
+        bool includeExcluded = false,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Sets <c>excluded</c> to match exactly <paramref name="canonicalNames"/>
+    /// (case-insensitive): every entity is first un-excluded, then every entity
+    /// whose canonical name appears in the list is excluded. Names with no
+    /// matching entity are ignored. Used to sync the dictionary against the
+    /// contents of the vault's <c>entity-exclusions.md</c> file. Transactional.
+    /// </summary>
+    Task ReplaceExclusionsAsync(
+        IReadOnlyCollection<string> canonicalNames,
+        CancellationToken cancellationToken = default);
+}
