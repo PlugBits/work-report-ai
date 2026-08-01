@@ -75,11 +75,18 @@ corners) applied consistently across all windows.
   target week and each day's candidate count. Days with zero candidates are
   highlighted (weekdays more strongly than weekends) and clickable to add a manual
   row pre-filled with that date.
-- An opt-in weekday evening reminder (settings default 17:00) shows a tray balloon
-  when today has zero quick notes and no reminder has been shown yet that day.
-  Clicking the balloon opens quick capture. The check runs from a 60-second tray
-  timer against a pure `ReminderPlanner` decision; the last-shown date is stored as
-  plain settings state.
+- An opt-in weekday reminder covers the day in two half-day slots (settings default
+  11:00 and 16:00, configurable as a comma-separated `HH:mm` list): each slot shows
+  a tray balloon if nothing has been noted since the previous slot's time (the
+  first slot covers since midnight) and that slot hasn't already fired today.
+  Clicking the balloon opens quick capture. Optional **スマート通知** acceleration
+  fires a hungry slot up to 60 minutes early when the user has just returned from
+  a break — detected locally as a Windows session unlock or 10+ minutes of
+  keyboard/mouse idle followed by renewed activity. (Git-commit activity was
+  considered as a possible smart trigger and deliberately rejected as too noisy;
+  there is no repository monitoring here.) The check runs from a 60-second tray
+  timer against a pure `SlotReminderPlanner` decision; each slot's last-shown date
+  is stored as its own plain settings state key.
 - An opt-in **Windowsログイン時に自動起動する** checkbox in settings registers the
   app under the current user's `HKCU\...\Run` key. Registration requires the
   published, self-contained EXE — running through `dotnet run`/the dotnet host is
@@ -360,7 +367,7 @@ The `WorkLogAI.App` WPF project (`net8.0-windows`) only builds on Windows. On
 non-Windows hosts, build and run `WorkLogAI.Tests` with
 `-p:EnableWindowsTargeting=true`, e.g.
 `dotnet test tests/WorkLogAI.Tests/WorkLogAI.Tests.csproj -p:EnableWindowsTargeting=true`.
-The suite currently has 357 tests.
+The suite currently has 374 tests.
 
 Create the specified self-contained, single-file Windows build with:
 

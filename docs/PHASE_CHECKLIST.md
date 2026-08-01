@@ -76,12 +76,21 @@
       counts, computed by the pure `WeekCoverageCalculator`
 - [x] Zero-candidate days are highlighted (weekdays more strongly than weekends) and
       clickable to add a manual row pre-filled with that date
-- [x] Weekday evening reminder: pure `ReminderPlanner` decision (enabled, weekday,
-      configured time gate, zero-notes-today, once-per-day), driven by a 60-second
-      tray timer
+- [x] Weekday two-slot reminder: pure `SlotReminderPlanner` decision (enabled,
+      weekday, per-slot half-day coverage check, once-per-day per slot, fixed
+      slot-time gate plus a 60-minute break-return acceleration window), driven
+      by a 60-second tray timer
 - [x] Reminder balloon click opens quick capture; settings expose
-      `reminder.enabled` and `reminder.time` (default 17:00); last-shown date is
-      stored as plain state before the balloon is shown
+      `reminder.enabled`, `reminder.times` (default `11:00,16:00`, tolerant
+      comma/space parse with soft-migration from the legacy single
+      `reminder.time`), and `reminder.smart_enabled` (default on); each slot's
+      last-shown date is stored as its own `reminder.slot{i}.last_shown_date`
+      plain state key before its balloon is shown
+- [x] Break-return acceleration signals are local-only and deliberately limited
+      to two: a Windows session unlock (`SystemEvents.SessionSwitch`) and 10+
+      minutes idle followed by renewed input (`GetLastInputInfo` P/Invoke) — a
+      git-commit-based trigger was considered and rejected as too noisy, so
+      there is no repository monitoring anywhere in the reminder path
 - [x] Opt-in Windows auto-start via `IStartupRegistrar`/`WindowsStartupRegistrar`,
       an HKCU Run key entry
 - [x] Auto-start registration requires the published EXE — the dotnet host is
@@ -352,6 +361,34 @@ Teams, OneDrive, or additional mailboxes).
       the export, **出力** proceeds to the existing exporter call and
       `ExportResultPrompt`. The monthly export flow (`App.xaml.cs`,
       **月次まとめを出力…**) is unchanged this round.
+
+## Post-Phase 4 reminder rework: two-slot smart notifications
+
+- [x] `ReminderPlanner` replaced by pure `SlotReminderPlanner`: an ordered list of
+      slot times, each covering the half-day since the previous slot (the first
+      slot since midnight), fires at most one slot per tick — the lowest-index
+      slot that is both "hungry" (nothing noted since its coverage start, not
+      already shown today) and either past its fixed time (also acting as
+      catch-up for a tick that only resumes after the target) or, with smart
+      acceleration on, within 60 minutes of it with a break-return signal present
+- [x] Settings gain `reminder.times` (comma/space-separated `HH:mm` list, default
+      `11:00,16:00`, tolerant parse that drops invalid entries and sorts/dedupes,
+      soft-migrating from the legacy single `reminder.time` when `reminder.times`
+      has never been written) and `reminder.smart_enabled` (default on); per-slot
+      state lives in its own `reminder.slot{i}.last_shown_date` key, superseding
+      the legacy single `reminder.last_shown_date` (now unused)
+- [x] App-side break-return detection is local-only and limited to exactly two
+      signals: a Windows session unlock (`Microsoft.Win32.SystemEvents.SessionSwitch`,
+      subscribed at startup, unsubscribed in `OnExit`) and 10+ minutes idle
+      followed by renewed input (new `IdleTimeProvider`, a `GetLastInputInfo`
+      user32 P/Invoke helper). A git-commit-based trigger was explicitly
+      considered and rejected as too noisy — there is no repository monitoring
+      anywhere in the reminder path, by design
+- [x] Settings window's 基本 tab relabels the reminder time field to **通知時刻
+      (HH:mm、カンマ区切り)** with save-time validation requiring at least one
+      valid time, and adds a **スマート通知（離席復帰で前倒し）** checkbox
+- [x] Balloon copy is slot-aware: the first slot reads 「午前の業務メモがまだあり
+      ません。」; later slots read 「{前スロット時刻}以降の業務メモがありません。」
 
 ## Explicitly not implemented after Phase 4
 

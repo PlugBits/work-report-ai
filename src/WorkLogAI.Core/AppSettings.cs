@@ -14,8 +14,28 @@ public static class AppSettingKeys
     public const string OpenAiModel = "ai.openai_model";
     public const string SendPreviewEnabled = "ai.send_preview_enabled";
     public const string ReminderEnabled = "reminder.enabled";
+    public const string ReminderSmartEnabled = "reminder.smart_enabled";
+
+    /// <summary>
+    /// Comma/space-separated "HH:mm" slot list, e.g. "11:00,16:00". Superseded the single
+    /// <see cref="ReminderTime"/> preference; <see cref="AppSettingsService.LoadAsync"/>
+    /// soft-migrates from it when this key is absent.
+    /// </summary>
+    public const string ReminderTimes = "reminder.times";
+
+    /// <summary>Legacy single reminder time, read only for migration into <see cref="ReminderTimes"/>.</summary>
     public const string ReminderTime = "reminder.time";
+
+    /// <summary>
+    /// Legacy single last-shown date, superseded by the per-slot
+    /// <c>reminder.slot{i}.last_shown_date</c> state keys (read/written directly through
+    /// ISettingsStore, like <see cref="MeetingWindowPlacement"/>). No longer read or written.
+    /// </summary>
     public const string ReminderLastShownDate = "reminder.last_shown_date";
+
+    public static string ReminderSlotLastShownDate(int slotIndex) =>
+        $"reminder.slot{slotIndex}.last_shown_date";
+
     public const string BackupLastCheckedDate = "backup.last_checked_date";
     public const string GraphClientId = "graph.client_id";
     public const string GraphTenantId = "graph.tenant_id";
@@ -54,7 +74,8 @@ public sealed class AppSettingsService(ISettingsStore store)
             ?? "gpt-5.6-sol";
         var previewValue = await store.GetAsync(AppSettingKeys.SendPreviewEnabled, cancellationToken);
         var reminderEnabledValue = await store.GetAsync(AppSettingKeys.ReminderEnabled, cancellationToken);
-        var reminderTimeValue = await store.GetAsync(AppSettingKeys.ReminderTime, cancellationToken);
+        var reminderSmartEnabledValue = await store.GetAsync(AppSettingKeys.ReminderSmartEnabled, cancellationToken);
+        var reminderTimesValue = await store.GetAsync(AppSettingKeys.ReminderTimes, cancellationToken);
         var graphClientId = await store.GetAsync(AppSettingKeys.GraphClientId, cancellationToken);
         var graphTenantId = await store.GetAsync(AppSettingKeys.GraphTenantId, cancellationToken);
         var graphMailEnabledValue = await store.GetAsync(AppSettingKeys.GraphMailEnabled, cancellationToken);
@@ -69,12 +90,9 @@ public sealed class AppSettingsService(ISettingsStore store)
         var reportTitle = string.IsNullOrWhiteSpace(reportTitleValue)
             ? ReportIdentity.Default.ReportTitle
             : reportTitleValue.Trim();
-        var reminderTime = TimeOnly.TryParseExact(
-            reminderTimeValue,
-            "HH:mm",
-            out var parsedReminderTime)
-            ? parsedReminderTime
-            : AppSettingsSnapshot.DefaultReminderTime;
+        var reminderTimes = reminderTimesValue is not null
+            ? ParseReminderTimes(reminderTimesValue)
+            : await MigrateLegacyReminderTimeAsync(store, cancellationToken);
 
         return new AppSettingsSnapshot(
             company,
@@ -87,7 +105,8 @@ public sealed class AppSettingsService(ISettingsStore store)
             model,
             !bool.TryParse(previewValue, out var previewEnabled) || previewEnabled,
             !bool.TryParse(reminderEnabledValue, out var reminderEnabled) || reminderEnabled,
-            reminderTime,
+            reminderTimes,
+            !bool.TryParse(reminderSmartEnabledValue, out var reminderSmartEnabled) || reminderSmartEnabled,
             string.IsNullOrWhiteSpace(graphClientId) ? string.Empty : graphClientId.Trim(),
             string.IsNullOrWhiteSpace(graphTenantId) ? "common" : graphTenantId.Trim(),
             bool.TryParse(graphMailEnabledValue, out var graphMailEnabled) && graphMailEnabled,
@@ -134,8 +153,12 @@ public sealed class AppSettingsService(ISettingsStore store)
             settings.ReminderEnabled.ToString(),
             cancellationToken);
         await store.SetAsync(
-            AppSettingKeys.ReminderTime,
-            settings.ReminderTime.ToString("HH:mm"),
+            AppSettingKeys.ReminderTimes,
+            string.Join(',', settings.ReminderTimes.Select(time => time.ToString("HH:mm"))),
+            cancellationToken);
+        await store.SetAsync(
+            AppSettingKeys.ReminderSmartEnabled,
+            settings.ReminderSmartEnabled.ToString(),
             cancellationToken);
         await store.SetAsync(
             AppSettingKeys.GraphClientId,
@@ -173,6 +196,46 @@ public sealed class AppSettingsService(ISettingsStore store)
             : value.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
+
+    /// <summary>
+    /// Tolerant parse of the comma/space-separated "HH:mm" slot list: invalid entries are
+    /// dropped, the surviving times are sorted and de-duplicated, and an empty result (no
+    /// valid entries at all) falls back to the default slots.
+    /// </summary>
+    internal static IReadOnlyList<TimeOnly> ParseReminderTimes(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return AppSettingsSnapshot.DefaultReminderTimes;
+        }
+
+        var parsed = value
+            .Split(new[] { ',', ' ' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(part => TimeOnly.TryParseExact(part, "HH:mm", out var time) ? (TimeOnly?)time : null)
+            .Where(time => time.HasValue)
+            .Select(time => time!.Value)
+            .Distinct()
+            .OrderBy(time => time)
+            .ToArray();
+
+        return parsed.Length > 0 ? parsed : AppSettingsSnapshot.DefaultReminderTimes;
+    }
+
+    /// <summary>
+    /// Soft-migration for installs that only ever wrote the legacy single
+    /// <see cref="AppSettingKeys.ReminderTime"/> value: used only when
+    /// <see cref="AppSettingKeys.ReminderTimes"/> has never been written.
+    /// </summary>
+    private static async Task<IReadOnlyList<TimeOnly>> MigrateLegacyReminderTimeAsync(
+        ISettingsStore store,
+        CancellationToken cancellationToken)
+    {
+        var legacyValue = await store.GetAsync(AppSettingKeys.ReminderTime, cancellationToken);
+        return !string.IsNullOrWhiteSpace(legacyValue)
+            && TimeOnly.TryParseExact(legacyValue, "HH:mm", out var legacyTime)
+            ? [legacyTime]
+            : AppSettingsSnapshot.DefaultReminderTimes;
+    }
 }
 
 public sealed record AppSettingsSnapshot(
@@ -186,7 +249,8 @@ public sealed record AppSettingsSnapshot(
     string OpenAiModel = "gpt-5.6-sol",
     bool SendPreviewEnabled = true,
     bool ReminderEnabled = true,
-    TimeOnly? ConfiguredReminderTime = null,
+    IReadOnlyList<TimeOnly>? ConfiguredReminderTimes = null,
+    bool ReminderSmartEnabled = true,
     string GraphClientId = "",
     string GraphTenantId = "common",
     bool GraphMailEnabled = false,
@@ -196,11 +260,11 @@ public sealed record AppSettingsSnapshot(
     bool MeetingIncludeRawLog = true,
     bool MeetingHotkeyEnabled = true)
 {
-    public static TimeOnly DefaultReminderTime { get; } = new(17, 0);
+    public static IReadOnlyList<TimeOnly> DefaultReminderTimes { get; } = [new(11, 0), new(16, 0)];
 
     public IReadOnlyList<string> LocalRepositoryPaths => ConfiguredLocalRepositoryPaths ?? [];
 
     public IReadOnlyList<string> RecentFileFolders => ConfiguredRecentFileFolders ?? [];
 
-    public TimeOnly ReminderTime => ConfiguredReminderTime ?? DefaultReminderTime;
+    public IReadOnlyList<TimeOnly> ReminderTimes => ConfiguredReminderTimes ?? DefaultReminderTimes;
 }
