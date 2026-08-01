@@ -13,7 +13,8 @@ public sealed class SqliteDatabaseInitializer(SqliteConnectionFactory connection
         (2, "WorkLogAI.Infrastructure.Migrations.002_phase3_review.sql"),
         (3, "WorkLogAI.Infrastructure.Migrations.003_meeting_mode.sql"),
         (4, "WorkLogAI.Infrastructure.Migrations.004_report_category.sql"),
-        (5, "WorkLogAI.Infrastructure.Migrations.005_suppressed_source_refs.sql")
+        (5, "WorkLogAI.Infrastructure.Migrations.005_suppressed_source_refs.sql"),
+        (6, "WorkLogAI.Infrastructure.Migrations.006_entities.sql")
     ];
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)

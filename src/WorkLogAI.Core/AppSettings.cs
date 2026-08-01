@@ -51,6 +51,13 @@ public static class AppSettingKeys
     /// going through AppSettingsSnapshot/AppSettingsService.
     /// </summary>
     public const string MeetingWindowPlacement = "meeting.window_placement";
+
+    /// <summary>Empty (the default) means the Obsidian vault daily-notes feature is off.</summary>
+    public const string VaultDailyNotesFolder = "vault.daily_notes_folder";
+
+    /// <summary>Minimum <c>occurrence_count</c> an entity needs before
+    /// <see cref="EntityLinkTargets.From"/> will link it in daily notes.</summary>
+    public const string VaultEntityLinkMinOccurrences = "vault.entity_link_min_occurrences";
 }
 
 public sealed class AppSettingsService(ISettingsStore store)
@@ -83,6 +90,9 @@ public sealed class AppSettingsService(ISettingsStore store)
         var meetingOutputFolder = await store.GetAsync(AppSettingKeys.MeetingOutputFolder, cancellationToken);
         var meetingIncludeRawLogValue = await store.GetAsync(AppSettingKeys.MeetingIncludeRawLog, cancellationToken);
         var meetingHotkeyEnabledValue = await store.GetAsync(AppSettingKeys.MeetingHotkeyEnabled, cancellationToken);
+        var vaultDailyNotesFolder = await store.GetAsync(AppSettingKeys.VaultDailyNotesFolder, cancellationToken);
+        var vaultEntityLinkMinOccurrencesValue = await store.GetAsync(
+            AppSettingKeys.VaultEntityLinkMinOccurrences, cancellationToken);
 
         var weekStartsOn = Enum.TryParse<DayOfWeek>(weekValue, true, out var parsed)
             ? parsed
@@ -114,7 +124,9 @@ public sealed class AppSettingsService(ISettingsStore store)
             reportTitle,
             string.IsNullOrWhiteSpace(meetingOutputFolder) ? string.Empty : meetingOutputFolder.Trim(),
             !bool.TryParse(meetingIncludeRawLogValue, out var meetingIncludeRawLog) || meetingIncludeRawLog,
-            !bool.TryParse(meetingHotkeyEnabledValue, out var meetingHotkeyEnabled) || meetingHotkeyEnabled);
+            !bool.TryParse(meetingHotkeyEnabledValue, out var meetingHotkeyEnabled) || meetingHotkeyEnabled,
+            string.IsNullOrWhiteSpace(vaultDailyNotesFolder) ? string.Empty : vaultDailyNotesFolder.Trim(),
+            ParseEntityLinkMinOccurrences(vaultEntityLinkMinOccurrencesValue));
     }
 
     public async Task SaveAsync(AppSettingsSnapshot settings, CancellationToken cancellationToken = default)
@@ -188,6 +200,14 @@ public sealed class AppSettingsService(ISettingsStore store)
             AppSettingKeys.MeetingHotkeyEnabled,
             settings.MeetingHotkeyEnabled.ToString(),
             cancellationToken);
+        await store.SetAsync(
+            AppSettingKeys.VaultDailyNotesFolder,
+            settings.VaultDailyNotesFolder,
+            cancellationToken);
+        await store.SetAsync(
+            AppSettingKeys.VaultEntityLinkMinOccurrences,
+            settings.VaultEntityLinkMinOccurrences.ToString(),
+            cancellationToken);
     }
 
     private static IReadOnlyList<string> ParsePaths(string? value) =>
@@ -220,6 +240,13 @@ public sealed class AppSettingsService(ISettingsStore store)
 
         return parsed.Length > 0 ? parsed : AppSettingsSnapshot.DefaultReminderTimes;
     }
+
+    /// <summary>
+    /// Tolerant parse of the entity-link occurrence threshold: anything that isn't
+    /// a parseable integer of at least 1 falls back to the default of 2.
+    /// </summary>
+    internal static int ParseEntityLinkMinOccurrences(string? value) =>
+        int.TryParse(value, out var parsed) && parsed >= 1 ? parsed : 2;
 
     /// <summary>
     /// Soft-migration for installs that only ever wrote the legacy single
@@ -258,7 +285,9 @@ public sealed record AppSettingsSnapshot(
     string ReportTitle = "業務週報",
     string MeetingOutputFolder = "",
     bool MeetingIncludeRawLog = true,
-    bool MeetingHotkeyEnabled = true)
+    bool MeetingHotkeyEnabled = true,
+    string VaultDailyNotesFolder = "",
+    int VaultEntityLinkMinOccurrences = 2)
 {
     public static IReadOnlyList<TimeOnly> DefaultReminderTimes { get; } = [new(11, 0), new(16, 0)];
 

@@ -54,6 +54,8 @@ public sealed class SettingsWindow : Window
     private readonly TextBox _meetingOutputFolder = new();
     private readonly CheckBox _meetingIncludeRawLog = new() { Content = "生ログをMDに同梱" };
     private readonly CheckBox _meetingHotkeyEnabled = new() { Content = "Ctrl+Alt+M を有効化" };
+    private readonly TextBox _vaultDailyNotesFolder = new();
+    private readonly TextBox _vaultEntityLinkMinOccurrences = new();
 
     public SettingsWindow(
         AppSettingsService settings,
@@ -150,19 +152,22 @@ public sealed class SettingsWindow : Window
             }
         });
 
-        // 「議事録」: 議事録出力フォルダ, 生ログをMDに同梱, 議事録ホットキー(Ctrl+Alt+M)
-        var meetingGrid = NewTabGrid(3);
+        // 「議事録/Obsidian」: 議事録出力フォルダ, 生ログをMDに同梱, 議事録ホットキー(Ctrl+Alt+M),
+        // デイリーノート出力フォルダ, リンク化の最低出現回数
+        var meetingGrid = NewTabGrid(5);
         var meetingRow = 0;
         AddRow(meetingGrid, meetingRow++, "議事録出力フォルダ", _meetingOutputFolder);
         AddRow(meetingGrid, meetingRow++, "議事録Markdown", _meetingIncludeRawLog);
         AddRow(meetingGrid, meetingRow++, "議事録ホットキー", _meetingHotkeyEnabled);
+        AddRow(meetingGrid, meetingRow++, "デイリーノート出力フォルダ", _vaultDailyNotesFolder);
+        AddRow(meetingGrid, meetingRow++, "リンク化の最低出現回数", _vaultEntityLinkMinOccurrences);
 
         var tabControl = new TabControl();
         tabControl.Items.Add(new TabItem { Header = "基本", Content = TabScrollHost(basicGrid) });
         tabControl.Items.Add(new TabItem { Header = "収集", Content = TabScrollHost(collectionGrid) });
         tabControl.Items.Add(new TabItem { Header = "AI", Content = TabScrollHost(aiGrid) });
         tabControl.Items.Add(new TabItem { Header = "Microsoft 365", Content = TabScrollHost(graphGrid) });
-        tabControl.Items.Add(new TabItem { Header = "議事録", Content = TabScrollHost(meetingGrid) });
+        tabControl.Items.Add(new TabItem { Header = "議事録/Obsidian", Content = TabScrollHost(meetingGrid) });
 
         var buttons = new StackPanel
         {
@@ -272,6 +277,8 @@ public sealed class SettingsWindow : Window
         _meetingOutputFolder.Text = values.MeetingOutputFolder;
         _meetingIncludeRawLog.IsChecked = values.MeetingIncludeRawLog;
         _meetingHotkeyEnabled.IsChecked = values.MeetingHotkeyEnabled;
+        _vaultDailyNotesFolder.Text = values.VaultDailyNotesFolder;
+        _vaultEntityLinkMinOccurrences.Text = values.VaultEntityLinkMinOccurrences.ToString();
         UpdateGraphSignInEnabled();
         await RefreshGraphStatusAsync();
     }
@@ -403,6 +410,13 @@ public sealed class SettingsWindow : Window
             return;
         }
 
+        if (!int.TryParse(_vaultEntityLinkMinOccurrences.Text, out var vaultEntityLinkMinOccurrences)
+            || vaultEntityLinkMinOccurrences < 1)
+        {
+            MessageBox.Show(this, "リンク化の最低出現回数は1以上の整数で入力してください。", "WorkLog AI");
+            return;
+        }
+
         try
         {
             await _settings.SaveAsync(new AppSettingsSnapshot(
@@ -425,7 +439,9 @@ public sealed class SettingsWindow : Window
                 _reportTitle.Text.Trim(),
                 _meetingOutputFolder.Text.Trim(),
                 _meetingIncludeRawLog.IsChecked == true,
-                _meetingHotkeyEnabled.IsChecked == true));
+                _meetingHotkeyEnabled.IsChecked == true,
+                _vaultDailyNotesFolder.Text.Trim(),
+                vaultEntityLinkMinOccurrences));
             if (_removeApiKey.IsChecked == true)
             {
                 await _credentials.DeleteAsync(CredentialTargets.OpenAiApiKey);

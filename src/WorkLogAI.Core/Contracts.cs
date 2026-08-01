@@ -29,6 +29,14 @@ public interface IQuickNoteRepository
         Guid id,
         string text,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// The calendar date of the earliest quick note's <c>created_at</c> (any deleted
+    /// state), or <c>null</c> when there are no notes at all. Used to seed the
+    /// Obsidian sync's 全期間(バックフィル) option with the true earliest date
+    /// instead of an arbitrary lookback window.
+    /// </summary>
+    Task<DateOnly?> GetEarliestCreatedDateAsync(CancellationToken cancellationToken = default);
 }
 
 public interface ISettingsStore
@@ -257,6 +265,17 @@ public interface IMeetingRepository
     Task<IReadOnlyList<(MeetingSession Session, MeetingSummary Summary)>> ListFormattedInRangeAsync(
         WeekRange range,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// The calendar date of the earliest <c>meeting_sessions.started_at</c> (any
+    /// status), or <c>null</c> when there are no sessions at all. <c>started_at</c>,
+    /// not <c>created_at</c>, is used deliberately — <c>created_at</c> is always the
+    /// row's insertion wall-clock time regardless of the meeting's actual date, so it
+    /// would make a poor backfill boundary. Used to seed the Obsidian sync's
+    /// 全期間(バックフィル) option alongside
+    /// <see cref="IQuickNoteRepository.GetEarliestCreatedDateAsync"/>.
+    /// </summary>
+    Task<DateOnly?> GetEarliestStartedDateAsync(CancellationToken cancellationToken = default);
 }
 
 public interface ICredentialStore
@@ -317,4 +336,43 @@ public interface IStartupRegistrar
 public sealed record ReportIdentity(string CompanyName, string EmployeeName, string ReportTitle = "業務週報")
 {
     public static ReportIdentity Default { get; } = new("会社名", "氏名");
+}
+
+/// <summary>
+/// The self-growing entity dictionary behind vault linking. Entities are matched
+/// by canonical name OR any existing alias, case-insensitively, so a caller never
+/// needs to know in advance whether a name is already known under a different
+/// spelling.
+/// </summary>
+public interface IEntityRepository
+{
+    /// <summary>
+    /// Merges each observation into the dictionary: a match (by canonical name or
+    /// any existing alias of the observation's canonical name or its own aliases)
+    /// increments <c>occurrence_count</c>, advances <c>last_seen_at</c> to
+    /// <paramref name="observedAt"/>, upgrades the stored kind only when it was
+    /// still <see cref="EntityKinds.Other"/>, and merges in any new aliases
+    /// (an alias that already belongs to a different entity is skipped — first
+    /// owner wins). A miss inserts a brand-new entity. All observations in the
+    /// batch are applied within a single transaction.
+    /// </summary>
+    Task UpsertObservationsAsync(
+        IReadOnlyList<EntityObservation> observations,
+        DateTimeOffset observedAt,
+        CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<WorkEntity>> ListAsync(
+        bool includeExcluded = false,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Sets <c>excluded</c> to match exactly <paramref name="canonicalNames"/>
+    /// (case-insensitive): every entity is first un-excluded, then every entity
+    /// whose canonical name appears in the list is excluded. Names with no
+    /// matching entity are ignored. Used to sync the dictionary against the
+    /// contents of the vault's <c>entity-exclusions.md</c> file. Transactional.
+    /// </summary>
+    Task ReplaceExclusionsAsync(
+        IReadOnlyCollection<string> canonicalNames,
+        CancellationToken cancellationToken = default);
 }

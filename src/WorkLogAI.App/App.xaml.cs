@@ -23,6 +23,7 @@ public partial class App : System.Windows.Application
     private AppServices? _services;
     private DispatcherTimer? _reminderTimer;
     private int _collectionRunning;
+    private int _vaultSyncRunning;
     private bool _sampleMode;
     private DateTime _lastUnhandledDialogShownAt = DateTime.MinValue;
     private Mutex? _singleInstanceMutex;
@@ -223,6 +224,7 @@ public partial class App : System.Windows.Application
         menu.Items.Add("議事録を開始 (Ctrl+Alt+M)", null, (_, _) => ShowMeetingMode());
         menu.Items.Add("週報候補を生成…", null, async (_, _) => await GenerateCandidatesAsync());
         menu.Items.Add("月次まとめを出力…", null, async (_, _) => await ExportMonthlySummaryAsync());
+        menu.Items.Add("Obsidianへ同期…", null, async (_, _) => await SyncVaultToObsidianAsync());
         menu.Items.Add("今週の記録を見る", null, (_, _) => ShowHistory());
         menu.Items.Add("設定", null, (_, _) => ShowSettings());
         menu.Items.Add(new Forms.ToolStripSeparator());
@@ -680,6 +682,117 @@ public partial class App : System.Windows.Application
                 "WorkLog AI",
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
+        }
+    }
+
+    private async Task SyncVaultToObsidianAsync()
+    {
+        if (_services is null || Interlocked.Exchange(ref _vaultSyncRunning, 1) == 1)
+        {
+            if (_vaultSyncRunning == 1)
+            {
+                MessageBox.Show("Obsidian同期は実行中です。", "WorkLog AI");
+            }
+            return;
+        }
+
+        ProgressStatusWindow? progress = null;
+        try
+        {
+            var settings = await _services.Settings.LoadAsync();
+            if (string.IsNullOrWhiteSpace(settings.VaultDailyNotesFolder))
+            {
+                MessageBox.Show(
+                    "デイリーノート出力フォルダが未設定です。設定画面で指定してください。",
+                    "WorkLog AI");
+                return;
+            }
+
+            var hasCredential = !string.IsNullOrWhiteSpace(
+                await _services.Credentials.GetAsync(CredentialTargets.OpenAiApiKey));
+
+            var picker = new VaultSyncWindow(hasCredential);
+            if (picker.ShowDialog() != true)
+            {
+                return;
+            }
+
+            var today = DateOnly.FromDateTime(DateTime.Today);
+            var weekOptions = WeekOptionBuilder.Build(today, settings.WeekStartsOn, 2);
+            var (fromDate, toDate) = picker.SelectedRange switch
+            {
+                VaultSyncRangeKind.ThisWeek => (weekOptions[0].Range.Start, weekOptions[0].Range.End),
+                VaultSyncRangeKind.LastWeek => (weekOptions[1].Range.Start, weekOptions[1].Range.End),
+                VaultSyncRangeKind.Backfill => (await _services.GetVaultBackfillStartDateAsync(), today),
+                _ => (today, today)
+            };
+
+            var runExtraction = picker.RunExtraction;
+            if (runExtraction && settings.SendPreviewEnabled)
+            {
+                var count = await _services.CountVaultExtractionTextsAsync(fromDate, toDate);
+                if (count == 0)
+                {
+                    runExtraction = false;
+                }
+                else
+                {
+                    var answer = MessageBox.Show(
+                        $"エンティティ抽出のため、対象期間のメモ・議事録テキスト {count}件をOpenAIへ送信します。" +
+                        "よろしいですか？",
+                        "WorkLog AI",
+                        MessageBoxButton.YesNoCancel,
+                        MessageBoxImage.Question);
+                    if (answer == MessageBoxResult.Cancel)
+                    {
+                        return;
+                    }
+                    runExtraction = answer == MessageBoxResult.Yes;
+                }
+            }
+
+            progress = new ProgressStatusWindow();
+            progress.SetStatus("Obsidianへ同期中…");
+            progress.Show();
+            var statusProgress = new Progress<string>(status => progress?.SetStatus(status));
+
+            var result = await _services.SyncVaultAsync(fromDate, toDate, runExtraction, statusProgress);
+
+            progress.Close();
+            progress = null;
+
+            if (!result.Succeeded)
+            {
+                MessageBox.Show(
+                    result.Error ?? "Obsidianへの同期に失敗しました。",
+                    "WorkLog AI",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
+            var message =
+                $"同期が完了しました。デイリーノート {result.WrittenDays}日分 / " +
+                $"辞書 {result.TotalEntities}語 (リンク対象 {result.LinkedTargets}語)";
+            if (result.ExtractionErrors.Count > 0)
+            {
+                message += $"\n抽出エラー {result.ExtractionErrors.Count}件";
+            }
+            MessageBox.Show(message, "WorkLog AI");
+        }
+        catch (Exception exception)
+        {
+            ErrorLog.Log("App.VaultSync", exception);
+            MessageBox.Show(
+                $"Obsidianへの同期に失敗しました。\n{exception.Message}",
+                "WorkLog AI",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
+        finally
+        {
+            progress?.Close();
+            Interlocked.Exchange(ref _vaultSyncRunning, 0);
         }
     }
 
