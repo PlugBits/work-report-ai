@@ -39,8 +39,9 @@ public sealed class SettingsWindow : Window
     };
     private readonly TextBlock _testApiKeyResult = new() { Margin = new Thickness(0, 4, 0, 0) };
     private readonly OpenAiKeyProbe _keyProbe = new();
-    private readonly CheckBox _reminderEnabled = new() { Content = "平日夕方にメモ0件をリマインド" };
-    private readonly TextBox _reminderTime = new();
+    private readonly CheckBox _reminderEnabled = new() { Content = "平日にメモ0件をリマインド" };
+    private readonly TextBox _reminderTimes = new();
+    private readonly CheckBox _reminderSmartEnabled = new() { Content = "スマート通知（離席復帰で前倒し）" };
     private readonly CheckBox _autoStart = new() { Content = "Windowsログイン時に自動起動する" };
     private readonly TextBox _graphClientId = new();
     private readonly TextBox _graphTenantId = new();
@@ -74,8 +75,8 @@ public sealed class SettingsWindow : Window
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
 
         // 「基本」: 会社名, 氏名, 週報タイトル, 週の開始曜日, Excel保存先, ホットキー(表示のみ),
-        // 自動起動, メモ0件リマインド, リマインド時刻
-        var basicGrid = NewTabGrid(9);
+        // 自動起動, メモ0件リマインド, 通知時刻(複数スロット), スマート通知
+        var basicGrid = NewTabGrid(10);
         var basicRow = 0;
         AddRow(basicGrid, basicRow++, "会社名", _company);
         AddRow(basicGrid, basicRow++, "氏名", _employee);
@@ -91,7 +92,8 @@ public sealed class SettingsWindow : Window
         _autoStart.IsEnabled = !_sampleMode;
         AddRow(basicGrid, basicRow++, "自動起動", _autoStart);
         AddRow(basicGrid, basicRow++, "メモ0件リマインド", _reminderEnabled);
-        AddRow(basicGrid, basicRow++, "リマインド時刻(HH:mm)", _reminderTime);
+        AddRow(basicGrid, basicRow++, "通知時刻 (HH:mm、カンマ区切り)", _reminderTimes);
+        AddRow(basicGrid, basicRow++, "スマート通知", _reminderSmartEnabled);
 
         // 「収集」: ローカルGit, Codexセッション, 更新ファイル対象, 収集範囲の説明文
         var collectionGrid = NewTabGrid(4);
@@ -239,7 +241,8 @@ public sealed class SettingsWindow : Window
         _model.Text = values.OpenAiModel;
         _preview.IsChecked = values.SendPreviewEnabled;
         _reminderEnabled.IsChecked = values.ReminderEnabled;
-        _reminderTime.Text = values.ReminderTime.ToString("HH:mm");
+        _reminderTimes.Text = string.Join(", ", values.ReminderTimes.Select(time => time.ToString("HH:mm")));
+        _reminderSmartEnabled.IsChecked = values.ReminderSmartEnabled;
         try
         {
             _credentialStatus.Text = string.IsNullOrWhiteSpace(
@@ -385,9 +388,18 @@ public sealed class SettingsWindow : Window
             return;
         }
 
-        if (!TimeOnly.TryParseExact(_reminderTime.Text.Trim(), "HH:mm", out var reminderTime))
+        var reminderTimes = _reminderTimes.Text
+            .Split(new[] { ',', ' ' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(part => TimeOnly.TryParseExact(part, "HH:mm", out var time) ? (TimeOnly?)time : null)
+            .Where(time => time.HasValue)
+            .Select(time => time!.Value)
+            .Distinct()
+            .OrderBy(time => time)
+            .ToArray();
+
+        if (reminderTimes.Length == 0)
         {
-            MessageBox.Show(this, "リマインド時刻はHH:mm形式で入力してください。", "WorkLog AI");
+            MessageBox.Show(this, "通知時刻はHH:mm形式で1つ以上入力してください。", "WorkLog AI");
             return;
         }
 
@@ -404,7 +416,8 @@ public sealed class SettingsWindow : Window
                 _model.Text.Trim(),
                 _preview.IsChecked == true,
                 _reminderEnabled.IsChecked == true,
-                reminderTime,
+                reminderTimes,
+                _reminderSmartEnabled.IsChecked == true,
                 _graphClientId.Text.Trim(),
                 string.IsNullOrWhiteSpace(_graphTenantId.Text) ? "common" : _graphTenantId.Text.Trim(),
                 _graphMailEnabled.IsChecked == true,

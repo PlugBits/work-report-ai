@@ -5,7 +5,7 @@
 - `WorkLogAI.Core` (`net8.0`) contains domain records, storage/export abstractions,
   week calculation, non-secret settings policy, collection coordination,
   deterministic mapping, the weekly coverage calculator, and the reminder/auto-start
-  decision contracts (`ReminderPlanner`, `IStartupRegistrar`). It has no UI or
+  decision contracts (`SlotReminderPlanner`, `IStartupRegistrar`). It has no UI or
   database dependency.
 - `WorkLogAI.Infrastructure` (`net8.0-windows`) provides SQLite persistence,
   embedded SQL migration, default/injectable database paths, isolated sample-data
@@ -604,20 +604,34 @@ are not yet available (e.g. before the window has laid out).
 
 A `DispatcherTimer` ticks every 60 seconds. Each tick first calls
 `CheckDailyBackupAsync`, which compares today's date against a stored
-`backup.last_checked_date` setting (same pattern as the reminder's last-shown
-date); on the first tick of a new calendar day it stores today's date and calls
-`AppServices.RunDatabaseBackupIfDue()` (a no-op under `--sample-data`), which
-re-invokes the same `DatabaseBackupService.RunIfNeeded()` the startup path already
-uses — that method stays idempotent per week, so this only widens *how often* it
-gets a chance to run, letting a tray instance that never restarts still pick up a
-weekly backup. The tick then calls the pure `ReminderPlanner` (enabled flag,
-weekday check, configured time gate, zero-notes-today check, once-per-day via a
-stored last-shown date) to decide whether to show a tray balloon prompting the
-user to record a note; clicking the balloon opens quick capture. The last-shown
-date is persisted before the balloon is raised, as plain
-`reminder.last_shown_date` settings state, so a restart mid-day cannot re-trigger
-the same day's reminder. Both checks share the tick's one try/catch, logged to
-`ErrorLog` under `App.ReminderTick` on failure.
+`backup.last_checked_date` setting (same pattern as each reminder slot's
+last-shown date); on the first tick of a new calendar day it stores today's date
+and calls `AppServices.RunDatabaseBackupIfDue()` (a no-op under `--sample-data`),
+which re-invokes the same `DatabaseBackupService.RunIfNeeded()` the startup path
+already uses — that method stays idempotent per week, so this only widens *how
+often* it gets a chance to run, letting a tray instance that never restarts still
+pick up a weekly backup.
+
+The reminder itself covers the day as an ordered list of slots (`reminder.times`,
+default two: 11:00 and 16:00) rather than a single end-of-day check. Each tick
+calls the pure `SlotReminderPlanner` (enabled flag, weekday check, per-slot
+"nothing noted since the previous slot's time" coverage check, once-per-day via a
+per-slot stored last-shown date, and the fixed slot-time gate) to decide which
+slot, if any, should show a tray balloon; clicking the balloon opens quick
+capture. A slot's last-shown date is persisted (as its own
+`reminder.slot{i}.last_shown_date` state key) before the balloon is raised, so a
+restart mid-day cannot re-trigger the same slot the same day. When
+`reminder.smart_enabled` is on, a hungry slot can additionally fire up to 60
+minutes before its fixed time if the tick observes a **break-return** signal —
+either a Windows session unlock (`Microsoft.Win32.SystemEvents.SessionSwitch`,
+subscribed at startup and unsubscribed in `OnExit`) or the user having been idle
+(no keyboard/mouse input, via a `GetLastInputInfo` P/Invoke helper) for at least
+10 minutes and then active again for under a minute. Both signals are local to
+the machine, need no new OS permissions, and are the *only* smart trigger — a
+git-commit-based trigger was considered and explicitly rejected as too noisy, so
+there is no repository monitoring anywhere in the reminder path. All three
+checks (backup, reminder, break-return signal computation) share the tick's one
+try/catch, logged to `ErrorLog` under `App.ReminderTick` on failure.
 
 `WindowsStartupRegistrar` (`WorkLogAI.Infrastructure`, behind the `IStartupRegistrar`
 Core contract) implements opt-in auto-start by writing the current process path to

@@ -28,6 +28,17 @@ public partial class App : System.Windows.Application
     private Mutex? _singleInstanceMutex;
     private bool _singleInstanceMutexOwned;
 
+    /// <summary>
+    /// Set from <see cref="Microsoft.Win32.SystemEvents.SessionSwitch"/> (which may fire off
+    /// the UI thread) on a Windows unlock; consumed and reset by the very next reminder tick
+    /// regardless of whether that tick ends up firing a reminder. 0/1 rather than bool so the
+    /// cross-thread read/reset can use <see cref="Interlocked"/>.
+    /// </summary>
+    private int _unlockPending;
+
+    /// <summary>Idle duration observed on the previous reminder tick; null before the first tick.</summary>
+    private TimeSpan? _previousIdleDuration;
+
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
@@ -77,6 +88,7 @@ public partial class App : System.Windows.Application
             }
 
             StartReminderTimer();
+            SubscribeSessionSwitch();
         }
         catch (Exception exception)
         {
@@ -92,6 +104,7 @@ public partial class App : System.Windows.Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        UnsubscribeSessionSwitch();
         _reminderTimer?.Stop();
         _hotKey?.Dispose();
         _meetingHotKey?.Dispose();
@@ -229,6 +242,80 @@ public partial class App : System.Windows.Application
         _reminderTimer.Start();
     }
 
+    /// <summary>
+    /// One of the reminder's two break-return signals (the other is idle recovery, computed
+    /// per-tick in <see cref="CheckReminderAsync"/>). <see cref="Microsoft.Win32.SystemEvents"/>
+    /// invokes handlers on its own background thread, not the UI thread, hence the
+    /// interlocked flag rather than touching UI-thread state directly.
+    /// </summary>
+    private void SubscribeSessionSwitch()
+    {
+        try
+        {
+            Microsoft.Win32.SystemEvents.SessionSwitch += OnSessionSwitch;
+        }
+        catch (Exception exception)
+        {
+            ErrorLog.Log("App.Startup", exception);
+        }
+    }
+
+    private void UnsubscribeSessionSwitch()
+    {
+        try
+        {
+            Microsoft.Win32.SystemEvents.SessionSwitch -= OnSessionSwitch;
+        }
+        catch
+        {
+            // SystemEvents holds static handlers; failing to unsubscribe must never crash exit.
+        }
+    }
+
+    private void OnSessionSwitch(object sender, Microsoft.Win32.SessionSwitchEventArgs e)
+    {
+        try
+        {
+            if (e.Reason == Microsoft.Win32.SessionSwitchReason.SessionUnlock)
+            {
+                Interlocked.Exchange(ref _unlockPending, 1);
+            }
+        }
+        catch (Exception exception)
+        {
+            ErrorLog.Log("App.SessionSwitch", exception);
+        }
+    }
+
+    /// <summary>
+    /// Break-return signal for reminder acceleration: either the user just unlocked the
+    /// session, or they were idle (no keyboard/mouse input) for at least 10 minutes and have
+    /// now been active for under a minute. This is the ONLY smart trigger — there is
+    /// deliberately no git-commit or other repository-activity detection.
+    /// </summary>
+    private bool ComputeReturnedFromBreak()
+    {
+        var unlockPending = Interlocked.Exchange(ref _unlockPending, 0) == 1;
+
+        var previousIdle = _previousIdleDuration;
+        var currentIdle = TimeSpan.Zero;
+        try
+        {
+            currentIdle = IdleTimeProvider.GetIdleDuration();
+        }
+        catch (Exception exception)
+        {
+            ErrorLog.Log("App.IdleDetection", exception);
+        }
+        _previousIdleDuration = currentIdle;
+
+        var idleRecovery = previousIdle is { } previous
+            && previous >= TimeSpan.FromMinutes(10)
+            && currentIdle < TimeSpan.FromMinutes(1);
+
+        return idleRecovery || unlockPending;
+    }
+
     private async Task CheckReminderAsync()
     {
         if (_services is null || _trayIcon is null)
@@ -240,12 +327,22 @@ public partial class App : System.Windows.Application
         {
             await CheckDailyBackupAsync();
 
+            // Computed unconditionally (and before anything can early-return) so the
+            // once-per-tick unlock flag is always consumed, even on a tick where the
+            // reminder itself does not end up firing.
+            var returnedFromBreak = ComputeReturnedFromBreak();
+
             var settings = await _services.Settings.LoadAsync();
-            var lastShownValue = await _services.SettingsStore.GetAsync(
-                AppSettingKeys.ReminderLastShownDate);
-            var lastShown = DateOnly.TryParseExact(lastShownValue, "yyyy-MM-dd", out var parsed)
-                ? parsed
-                : (DateOnly?)null;
+            var slotTimes = settings.ReminderTimes;
+            var slotLastShownDates = new DateOnly?[slotTimes.Count];
+            for (var i = 0; i < slotTimes.Count; i++)
+            {
+                var value = await _services.SettingsStore.GetAsync(
+                    AppSettingKeys.ReminderSlotLastShownDate(i));
+                slotLastShownDates[i] = DateOnly.TryParseExact(value, "yyyy-MM-dd", out var parsed)
+                    ? parsed
+                    : (DateOnly?)null;
+            }
 
             var now = DateTime.Now;
             var todayStart = DateTime.Today;
@@ -253,28 +350,31 @@ public partial class App : System.Windows.Application
             var notes = await _services.Notes.ListAsync(
                 new DateTimeOffset(todayStart),
                 new DateTimeOffset(tomorrowStart));
+            var noteTimestamps = notes.Select(note => note.CreatedAt).ToArray();
 
-            var shouldRemind = ReminderPlanner.ShouldRemind(new ReminderPlanInput(
+            var slotToFire = SlotReminderPlanner.SlotToFire(new SlotReminderPlanInput(
                 settings.ReminderEnabled,
-                settings.ReminderTime,
+                slotTimes,
                 now,
-                notes.Count,
-                lastShown));
+                slotLastShownDates,
+                noteTimestamps,
+                settings.ReminderSmartEnabled,
+                returnedFromBreak));
 
-            if (!shouldRemind)
+            if (slotToFire is not { } slotIndex)
             {
                 return;
             }
 
             await _services.SettingsStore.SetAsync(
-                AppSettingKeys.ReminderLastShownDate,
+                AppSettingKeys.ReminderSlotLastShownDate(slotIndex),
                 DateOnly.FromDateTime(now).ToString("yyyy-MM-dd"));
 
-            _trayIcon.ShowBalloonTip(
-                10000,
-                "WorkLog AI",
-                "今日の業務メモがまだ0件です。Ctrl+Alt+W で1行記録しましょう。",
-                Forms.ToolTipIcon.Info);
+            var message = slotIndex == 0
+                ? "午前の業務メモがまだありません。Ctrl+Alt+W で1行記録しましょう。"
+                : $"{slotTimes[slotIndex - 1]:HH:mm}以降の業務メモがありません。Ctrl+Alt+W で1行記録しましょう。";
+
+            _trayIcon.ShowBalloonTip(10000, "WorkLog AI", message, Forms.ToolTipIcon.Info);
         }
         catch (Exception exception)
         {

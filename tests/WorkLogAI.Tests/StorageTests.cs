@@ -512,17 +512,19 @@ public sealed class StorageTests
             DayOfWeek.Monday,
             temporary.Path,
             ReminderEnabled: false,
-            ConfiguredReminderTime: new TimeOnly(9, 30));
+            ConfiguredReminderTimes: [new TimeOnly(9, 30), new TimeOnly(15, 0)],
+            ReminderSmartEnabled: false);
 
         await service.SaveAsync(expected);
         var actual = await service.LoadAsync();
 
         Assert.False(actual.ReminderEnabled);
-        Assert.Equal(new TimeOnly(9, 30), actual.ReminderTime);
+        Assert.Equal([new TimeOnly(9, 30), new TimeOnly(15, 0)], actual.ReminderTimes);
+        Assert.False(actual.ReminderSmartEnabled);
     }
 
     [Fact]
-    public async Task Reminder_time_defaults_to_seventeen_hundred_when_unset_or_invalid()
+    public async Task Reminder_times_default_to_eleven_and_sixteen_when_unset()
     {
         using var temporary = new TemporaryDirectory();
         var factory = new SqliteConnectionFactory(
@@ -532,12 +534,91 @@ public sealed class StorageTests
         var service = new AppSettingsService(store);
 
         var unset = await service.LoadAsync();
-        Assert.Equal(new TimeOnly(17, 0), unset.ReminderTime);
+        Assert.Equal([new TimeOnly(11, 0), new TimeOnly(16, 0)], unset.ReminderTimes);
         Assert.True(unset.ReminderEnabled);
+        Assert.True(unset.ReminderSmartEnabled);
+    }
 
-        await store.SetAsync(AppSettingKeys.ReminderTime, "not-a-time");
-        var invalid = await service.LoadAsync();
-        Assert.Equal(new TimeOnly(17, 0), invalid.ReminderTime);
+    [Fact]
+    public async Task Reminder_times_tolerant_parse_drops_invalid_entries_sorts_and_dedupes()
+    {
+        using var temporary = new TemporaryDirectory();
+        var factory = new SqliteConnectionFactory(
+            new FixedDatabasePathProvider(Path.Combine(temporary.Path, "reminder-tolerant.db")));
+        await new SqliteDatabaseInitializer(factory).InitializeAsync();
+        var store = new SqliteSettingsStore(factory);
+        var service = new AppSettingsService(store);
+
+        await store.SetAsync(AppSettingKeys.ReminderTimes, "16:00, not-a-time 11:00,11:00");
+        var actual = await service.LoadAsync();
+
+        Assert.Equal([new TimeOnly(11, 0), new TimeOnly(16, 0)], actual.ReminderTimes);
+    }
+
+    [Fact]
+    public async Task Reminder_times_falls_back_to_default_when_all_entries_are_invalid_or_blank()
+    {
+        using var temporary = new TemporaryDirectory();
+        var factory = new SqliteConnectionFactory(
+            new FixedDatabasePathProvider(Path.Combine(temporary.Path, "reminder-all-invalid.db")));
+        await new SqliteDatabaseInitializer(factory).InitializeAsync();
+        var store = new SqliteSettingsStore(factory);
+        var service = new AppSettingsService(store);
+
+        await store.SetAsync(AppSettingKeys.ReminderTimes, "not-a-time, also-bad");
+        var actual = await service.LoadAsync();
+
+        Assert.Equal([new TimeOnly(11, 0), new TimeOnly(16, 0)], actual.ReminderTimes);
+    }
+
+    [Fact]
+    public async Task Reminder_times_soft_migrates_from_legacy_single_time_when_times_key_absent()
+    {
+        using var temporary = new TemporaryDirectory();
+        var factory = new SqliteConnectionFactory(
+            new FixedDatabasePathProvider(Path.Combine(temporary.Path, "reminder-migrate.db")));
+        await new SqliteDatabaseInitializer(factory).InitializeAsync();
+        var store = new SqliteSettingsStore(factory);
+        var service = new AppSettingsService(store);
+
+        // Simulate a pre-existing install that only ever wrote the legacy single time.
+        await store.SetAsync(AppSettingKeys.ReminderTime, "09:30");
+        var actual = await service.LoadAsync();
+
+        Assert.Equal([new TimeOnly(9, 30)], actual.ReminderTimes);
+    }
+
+    [Fact]
+    public async Task Reminder_times_key_present_takes_priority_over_legacy_single_time()
+    {
+        using var temporary = new TemporaryDirectory();
+        var factory = new SqliteConnectionFactory(
+            new FixedDatabasePathProvider(Path.Combine(temporary.Path, "reminder-priority.db")));
+        await new SqliteDatabaseInitializer(factory).InitializeAsync();
+        var store = new SqliteSettingsStore(factory);
+        var service = new AppSettingsService(store);
+
+        await store.SetAsync(AppSettingKeys.ReminderTime, "09:30");
+        await store.SetAsync(AppSettingKeys.ReminderTimes, "12:00");
+        var actual = await service.LoadAsync();
+
+        Assert.Equal([new TimeOnly(12, 0)], actual.ReminderTimes);
+    }
+
+    [Fact]
+    public async Task Reminder_per_slot_last_shown_date_state_round_trips_through_settings_store()
+    {
+        using var temporary = new TemporaryDirectory();
+        var factory = new SqliteConnectionFactory(
+            new FixedDatabasePathProvider(Path.Combine(temporary.Path, "reminder-slot-state.db")));
+        await new SqliteDatabaseInitializer(factory).InitializeAsync();
+        var store = new SqliteSettingsStore(factory);
+
+        await store.SetAsync(AppSettingKeys.ReminderSlotLastShownDate(0), "2026-07-30");
+        await store.SetAsync(AppSettingKeys.ReminderSlotLastShownDate(1), "2026-07-29");
+
+        Assert.Equal("2026-07-30", await store.GetAsync(AppSettingKeys.ReminderSlotLastShownDate(0)));
+        Assert.Equal("2026-07-29", await store.GetAsync(AppSettingKeys.ReminderSlotLastShownDate(1)));
     }
 
     [Fact]
