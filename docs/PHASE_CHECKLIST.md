@@ -252,8 +252,9 @@ Teams, OneDrive, or additional mailboxes).
 - [x] Meeting hotkey toggle applies immediately via
       `App.ApplyMeetingHotKeySetting` on settings save, replacing the previous
       restart-required behavior
-- [x] Settings window reorganized into five tabs (基本/収集/AI/Microsoft 365/議事録)
-      at a fixed 560×560 size; every control/handler/validation moved unchanged
+- [x] Settings window reorganized into five tabs (基本/収集/AI/Microsoft 365/議事録,
+      later renamed 議事録/Obsidian — see Obsidian vault sync below) at a fixed
+      560×560 size; every control/handler/validation moved unchanged
 - [x] `.github/workflows/ci.yml`: `windows-latest` build-test job (`restore` /
       `build -c Release` / `test -c Release`) on push and pull request to `main` —
       the only place `WorkLogAI.App` (WPF) actually compiles end to end, since this
@@ -389,6 +390,80 @@ Teams, OneDrive, or additional mailboxes).
       valid time, and adds a **スマート通知（離席復帰で前倒し）** checkbox
 - [x] Balloon copy is slot-aware: the first slot reads 「午前の業務メモがまだあり
       ません。」; later slots read 「{前スロット時刻}以降の業務メモがありません。」
+
+## Obsidian vault sync
+
+- [x] Migration `006_entities.sql` (schema v6) adds `entities` (canonical name
+      unique `COLLATE NOCASE`, kind, occurrence count, first/last seen, excluded)
+      and `entity_aliases` (unique `COLLATE NOCASE` alias, indexed on `entity_id`)
+- [x] `EntityLinker`: pure, longest-match-first, case-insensitive rewriting into
+      `[[Canonical]]`/`[[Canonical|alias]]` wikilinks; never re-scans a replaced
+      span and skips text already inside an existing `[[...]]` link
+- [x] `EntityLinkTargets.From(entities, minOccurrences)` is the one threshold
+      policy point: excluded entities and any below the configured
+      **リンク化の最低出現回数** (default 2) are never offered as link targets
+- [x] `EntityExtractionClient`/`EntityExtractionPayloadBuilder` mirror
+      `MeetingFormatClient`'s contract exactly: `store:false`, no tools, strict
+      `text.format` JSON Schema, all-item `output_text` aggregation, bounded
+      response read, safe refusal/incomplete/error/malformed handling, and a
+      100-text/64 KiB hard cap per request enforced before sending
+- [x] `EntityExtractionValidator` drops a single malformed extracted item rather
+      than failing the whole batch — a best-effort, self-growing dictionary
+      tolerates one bad candidate far better than an empty extraction
+- [x] `SqliteEntityRepository.UpsertObservationsAsync` matches by canonical name OR
+      any existing alias (case-insensitive), increments occurrence/`last_seen_at`,
+      upgrades `kind` only from `other`, and merges new aliases first-owner-wins
+- [x] `DailyNoteBuilder.Build`: per-day メモ/会議/開発/週報 Markdown sections, each
+      omitted when empty, `null` returned (skip the file) only when the whole day
+      has nothing; meeting lines render `[[FileName|Title]]` (bare `[[FileName]]`
+      when the title is blank); development lines render fully in Japanese —
+      `{repo}: コミット{n}件 — {先頭のコミット件名}`, with 「 ほか」 appended once
+      `n` exceeds 1
+- [x] `DailyNoteWriter.Write` always overwrites `{folder}/yyyy-MM-dd.md` in full —
+      a one-way generated artifact, never hand-merged, matching
+      `MeetingMarkdownWriter`'s meeting files
+- [x] `ExclusionFileParser` + `entity-exclusions.md` (one name per line, optional
+      `[[...]]` wrapping, blank/`#` lines skipped): every sync replaces the
+      dictionary's excluded set to match the file exactly
+- [x] `DailyNoteMeetingBuilder` reconstructs each day's meeting filenames by
+      reapplying `MeetingFileNameBuilder`'s exact base-name-plus-collision-suffix
+      logic against only that day's sessions in `started_at` order, without disk
+      IO — a documented, accepted best-effort limitation (no meeting-to-file
+      mapping is persisted anywhere)
+- [x] Tray **Obsidianへ同期…** opens `VaultSyncWindow` (今週/先週/
+      全期間(バックフィル), an AI抽出 checkbox disabled+unchecked with no stored API
+      key); 全期間 starts from `AppServices.GetVaultBackfillStartDateAsync` (the
+      earlier of the earliest quick note and the earliest meeting `started_at`,
+      falling back to today)
+- [x] Extraction gets its own mandatory, count-based send-preview confirmation
+      (`CountVaultExtractionTextsAsync` computes the exact text count with no
+      network call) when `ai.send_preview_enabled` is on; Cancel aborts the whole
+      sync, No proceeds with dictionary use and daily-note writing but skips
+      extraction
+- [x] `EntityExtractionBatcher.Batch` splits the gathered corpus into sequential
+      requests within the client's caps; a per-batch failure is collected
+      (bounded to 5 messages) and never aborts the rest of the sync
+- [x] `MeetingMarkdownLinker.LinkBody` applies the entity-link transform to a
+      meeting Markdown document's body only, splitting at the end of the YAML
+      front matter's closing `---` line so a wikilink can never land in
+      `participants:`/`title:`; both `MeetingCaptureWindow` export paths (raw log
+      only, and AI-formatted) apply it via `AppServices.GetEntityLinkTargetsAsync`
+      immediately before writing
+- [x] Settings gain `vault.daily_notes_folder` and
+      `vault.entity_link_min_occurrences` (save-time validated as an integer ≥1);
+      the 議事録 tab is renamed 議事録/Obsidian and gains both fields
+- [x] `AppServices.SyncVaultAsync`'s per-day loop and (when extraction is on) its
+      sequential extraction calls run inside `Task.Run`, off the WPF dispatcher,
+      reporting Japanese status strings through `IProgress<string>` into the
+      existing `ProgressStatusWindow`
+- [x] Automated tests: batcher (count/byte-budget splitting, oversized-single-text
+      handling, blank-text skipping), text gatherer, meeting Markdown front-matter
+      split/link (including malformed-input fallback and identity round-trip),
+      daily-note meeting filename collision reconstruction, entity repository
+      match/merge/exclusion rules, entity extraction client/validator, entity
+      linker, daily-note builder (including the two Markdown-wording foundation
+      tweaks above), and the two new earliest-date repository queries — no live
+      API test
 
 ## Explicitly not implemented after Phase 4
 

@@ -258,6 +258,45 @@ corners) applied consistently across all windows.
   user deselects it — content-hash deduplication keeps both source events, the same
   class of behavior as an amended Git commit already produces.
 
+## Obsidian連携 (vault sync)
+
+- **自己成長する辞書**: an `entities` dictionary (customer/project/part/person/
+  system, plus "other") accumulates canonical names and aliases with an occurrence
+  count. It grows two ways — an optional AI extraction pass (see below) and simply
+  being observed again — and is entirely local SQLite; nothing about it is synced
+  anywhere except into the Markdown it renders as links.
+- **2件以上の出現で自動リンク化**: `EntityLinkTargets.From` only offers an entity as
+  a link target once its occurrence count reaches the configured
+  **リンク化の最低出現回数** (default 2, 設定 → 議事録/Obsidian tab) — a name seen
+  once is treated as noise, not yet worth linking. `EntityLinker` then rewrites
+  matching text into Obsidian `[[Canonical]]` (or `[[Canonical|alias]]` when the
+  matched spelling differs from the canonical one) wikilinks: longest-candidate-wins,
+  case-insensitive, and text already inside an existing `[[...]]` link is left alone.
+- **除外ファイル**: dropping an `entity-exclusions.md` file (one name per line,
+  optionally wrapped as `[[Name]]`, `#`-comment and blank lines ignored) in the
+  configured デイリーノート出力フォルダ lets you permanently exclude specific names
+  from linking — every sync re-reads it and replaces the dictionary's excluded set
+  to match exactly what the file currently lists.
+- **同期メニュー**: the tray's **Obsidianへ同期…** action opens a small picker —
+  今週 / 先週 / 全期間(バックフィル) (from the earliest quick note or meeting date in
+  the database) — plus an "AIで固有名詞を抽出して辞書を更新する" checkbox (default
+  on; disabled when no OpenAI API key is stored). With 送信前確認 enabled, extraction
+  shows a mandatory count-based confirmation (「対象期間のメモ・議事録テキスト
+  {n}件をOpenAIへ送信します」) before anything is sent; declining still lets the
+  daily notes sync using the dictionary as it already stands. Extraction batches
+  respect the client's per-request caps (≤100 texts / 64 KiB) and any per-batch
+  failure is collected and reported, never aborting the rest of the sync.
+- **一方向・上書き契約**: generated daily notes (`{folder}/yyyy-MM-dd.md` — メモ/
+  会議/開発/週報 sections, each omitted when empty) are a fully regenerated,
+  overwritten artifact on every sync, exactly like `MeetingMarkdownWriter`'s meeting
+  files — never hand-merged. Do not hand-edit a daily note expecting it to survive
+  the next sync; keep durable notes elsewhere in the vault and let WorkLog AI own
+  only the generated files.
+- Meeting Markdown exports (both the raw-log-only and AI整形 paths) also pass their
+  body — never the YAML front matter — through the same entity-link transform at
+  export time, so meeting notes and daily notes always link consistently against
+  the current dictionary.
+
 ### Microsoft 365 setup
 
 Microsoft Graph access requires an Azure AD app registration: a public client with
@@ -318,8 +357,8 @@ operational-quality items already implemented (see Usability additions above).
   calls `App.ApplyMeetingHotKeySetting` on save, which registers or unregisters
   `Ctrl+Alt+M` on the spot — no restart required, unlike its original behavior.
 - **Tabbed settings**: the settings window is organized into five tabs
-  (基本/収集/AI/Microsoft 365/議事録) instead of one long scrolling column, at a
-  smaller fixed 560×560 size.
+  (基本/収集/AI/Microsoft 365/議事録/Obsidian) instead of one long scrolling column,
+  at a smaller fixed 560×560 size.
 - **Windows CI**: `.github/workflows/ci.yml` builds and tests the full solution —
   including the WPF `WorkLogAI.App` project, which cannot compile on this
   repository's Linux dev host — on `windows-latest` for every push and pull
@@ -367,7 +406,7 @@ The `WorkLogAI.App` WPF project (`net8.0-windows`) only builds on Windows. On
 non-Windows hosts, build and run `WorkLogAI.Tests` with
 `-p:EnableWindowsTargeting=true`, e.g.
 `dotnet test tests/WorkLogAI.Tests/WorkLogAI.Tests.csproj -p:EnableWindowsTargeting=true`.
-The suite currently has 374 tests.
+The suite currently has 447 tests.
 
 Create the specified self-contained, single-file Windows build with:
 

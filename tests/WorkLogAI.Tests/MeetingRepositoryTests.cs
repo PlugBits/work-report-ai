@@ -230,6 +230,25 @@ public sealed class MeetingRepositoryTests
         Assert.Empty(results);
     }
 
+    [Fact]
+    public async Task Earliest_started_date_is_null_when_empty_and_the_minimum_started_at_once_sessions_exist()
+    {
+        using var temporary = new TemporaryDirectory();
+        var factory = await CreateDatabaseAsync(temporary, "earliest.db");
+        var repository = new SqliteMeetingRepository(factory);
+
+        Assert.Null(await repository.GetEarliestStartedDateAsync());
+
+        // Created out of chronological started_at order, to verify the query goes by
+        // started_at (the meeting's actual date) rather than insertion order/created_at.
+        await repository.CreateSessionAsync(
+            "later", "", MeetingKind.Meeting, new DateTimeOffset(2026, 7, 30, 9, 0, 0, TimeSpan.FromHours(9)));
+        await repository.CreateSessionAsync(
+            "earliest", "", MeetingKind.Meeting, new DateTimeOffset(2026, 6, 1, 9, 0, 0, TimeSpan.FromHours(9)));
+
+        Assert.Equal(new DateOnly(2026, 6, 1), await repository.GetEarliestStartedDateAsync());
+    }
+
     private static async Task<SqliteConnectionFactory> CreateDatabaseAsync(
         TemporaryDirectory temporary,
         string name)

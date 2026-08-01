@@ -29,6 +29,14 @@ public interface IQuickNoteRepository
         Guid id,
         string text,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// The calendar date of the earliest quick note's <c>created_at</c> (any deleted
+    /// state), or <c>null</c> when there are no notes at all. Used to seed the
+    /// Obsidian sync's 全期間(バックフィル) option with the true earliest date
+    /// instead of an arbitrary lookback window.
+    /// </summary>
+    Task<DateOnly?> GetEarliestCreatedDateAsync(CancellationToken cancellationToken = default);
 }
 
 public interface ISettingsStore
@@ -257,6 +265,17 @@ public interface IMeetingRepository
     Task<IReadOnlyList<(MeetingSession Session, MeetingSummary Summary)>> ListFormattedInRangeAsync(
         WeekRange range,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// The calendar date of the earliest <c>meeting_sessions.started_at</c> (any
+    /// status), or <c>null</c> when there are no sessions at all. <c>started_at</c>,
+    /// not <c>created_at</c>, is used deliberately — <c>created_at</c> is always the
+    /// row's insertion wall-clock time regardless of the meeting's actual date, so it
+    /// would make a poor backfill boundary. Used to seed the Obsidian sync's
+    /// 全期間(バックフィル) option alongside
+    /// <see cref="IQuickNoteRepository.GetEarliestCreatedDateAsync"/>.
+    /// </summary>
+    Task<DateOnly?> GetEarliestStartedDateAsync(CancellationToken cancellationToken = default);
 }
 
 public interface ICredentialStore

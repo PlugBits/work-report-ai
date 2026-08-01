@@ -586,6 +586,24 @@ public sealed class StorageTests
     }
 
     [Fact]
+    public async Task Earliest_created_date_is_null_when_empty_and_the_minimum_once_notes_exist()
+    {
+        using var temporary = new TemporaryDirectory();
+        var factory = new SqliteConnectionFactory(
+            new FixedDatabasePathProvider(Path.Combine(temporary.Path, "notes-earliest.db")));
+        await new SqliteDatabaseInitializer(factory).InitializeAsync();
+        var repository = new SqliteQuickNoteRepository(factory);
+
+        Assert.Null(await repository.GetEarliestCreatedDateAsync());
+
+        await repository.CreateAsync("later", new DateTimeOffset(2026, 7, 30, 9, 0, 0, TimeSpan.FromHours(9)));
+        await repository.CreateAsync("earliest", new DateTimeOffset(2026, 6, 1, 8, 0, 0, TimeSpan.FromHours(9)));
+        await repository.CreateAsync("middle", new DateTimeOffset(2026, 7, 1, 8, 0, 0, TimeSpan.FromHours(9)));
+
+        Assert.Equal(new DateOnly(2026, 6, 1), await repository.GetEarliestCreatedDateAsync());
+    }
+
+    [Fact]
     public async Task Settings_store_round_trips_allowed_values_and_rejects_secret_names()
     {
         using var temporary = new TemporaryDirectory();

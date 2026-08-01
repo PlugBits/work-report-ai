@@ -7,7 +7,9 @@ namespace WorkLogAI.Core;
 /// A meeting closed/formatted on a given day, ready to be linked from that day's
 /// daily note. <see cref="FileName"/> is the exported Markdown file name without
 /// its extension (see <see cref="MeetingFileNameBuilder"/> in Infrastructure) —
-/// the daily note links to it directly as <c>[[FileName]]</c>.
+/// the daily note links to it as <c>[[FileName|Title]]</c> so the link displays the
+/// meeting's title, falling back to a bare <c>[[FileName]]</c> when
+/// <see cref="Title"/> is blank.
 /// </summary>
 public sealed record DailyNoteMeeting(string Title, string FileName);
 
@@ -31,7 +33,8 @@ public static class DailyNoteBuilder
     /// <param name="candidateLines">Adopted (selected) report-candidate lines for the day.</param>
     /// <param name="linkText">Applied to quick-note text and candidate activity text to
     /// resolve entity wikilinks (see <see cref="EntityLinker.Link"/>); meeting titles are
-    /// never passed through this — they render as a direct <c>[[FileName]]</c> link.</param>
+    /// never passed through this — they render as-is inside the meeting's
+    /// <c>[[FileName|Title]]</c> link (see <see cref="DailyNoteMeeting"/>).</param>
     public static string? Build(
         DateOnly date,
         IReadOnlyList<QuickNote> quickNotes,
@@ -98,7 +101,12 @@ public static class DailyNoteBuilder
         builder.Append('\n').Append("## 会議").Append('\n');
         foreach (var meeting in meetings)
         {
-            builder.Append("- [[").Append(meeting.FileName).Append("]]").Append('\n');
+            builder.Append("- [[").Append(meeting.FileName);
+            if (!string.IsNullOrWhiteSpace(meeting.Title))
+            {
+                builder.Append('|').Append(meeting.Title);
+            }
+            builder.Append("]]").Append('\n');
         }
     }
 
@@ -112,9 +120,14 @@ public static class DailyNoteBuilder
         builder.Append('\n').Append("## 開発").Append('\n');
         foreach (var group in GroupByRepository(gitEvents))
         {
-            builder.Append("- ").Append(group.Repository).Append(": ")
-                .Append(group.Commits.Count).Append(" commits — ")
-                .Append(group.Commits[0]).Append('…').Append('\n');
+            builder.Append("- ").Append(group.Repository).Append(": コミット")
+                .Append(group.Commits.Count).Append("件 — ")
+                .Append(group.Commits[0]);
+            if (group.Commits.Count > 1)
+            {
+                builder.Append(" ほか");
+            }
+            builder.Append('\n');
         }
     }
 

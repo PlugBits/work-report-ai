@@ -96,6 +96,18 @@ public sealed class SqliteQuickNoteRepository(SqliteConnectionFactory connection
         return await command.ExecuteNonQueryAsync(cancellationToken) == 1;
     }
 
+    public async Task<DateOnly?> GetEarliestCreatedDateAsync(CancellationToken cancellationToken = default)
+    {
+        await using var connection = connectionFactory.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT MIN(created_at) FROM quick_notes;";
+        var result = await command.ExecuteScalarAsync(cancellationToken);
+        return result is string text
+            ? DateOnly.FromDateTime(DateTimeOffset.Parse(text, CultureInfo.InvariantCulture).DateTime)
+            : null;
+    }
+
     private async Task<bool> SetDeletedAtAsync(
         Guid id,
         string? deletedAt,

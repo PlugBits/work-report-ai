@@ -43,9 +43,19 @@ public sealed class DailyNoteBuilderTests
     }
 
     [Fact]
-    public void Meeting_section_links_directly_to_the_exported_file_name()
+    public void Meeting_section_links_to_the_exported_file_name_showing_the_title()
     {
         var meetings = new[] { new DailyNoteMeeting("定例会議", "2026-07-31_定例会議") };
+
+        var result = DailyNoteBuilder.Build(Date, [], meetings, [], [], text => text);
+
+        Assert.Contains("## 会議\n- [[2026-07-31_定例会議|定例会議]]\n", result);
+    }
+
+    [Fact]
+    public void Meeting_section_falls_back_to_a_bare_link_when_the_title_is_blank()
+    {
+        var meetings = new[] { new DailyNoteMeeting("", "2026-07-31_定例会議") };
 
         var result = DailyNoteBuilder.Build(Date, [], meetings, [], [], text => text);
 
@@ -65,7 +75,7 @@ public sealed class DailyNoteBuilderTests
         var result = DailyNoteBuilder.Build(Date, [], [], gitEvents, [], text => text);
 
         Assert.Contains(
-            "## 開発\n- worklogai: 2 commits — feat: A追加…\n- other-repo: 1 commits — feat: C追加…\n",
+            "## 開発\n- worklogai: コミット2件 — feat: A追加 ほか\n- other-repo: コミット1件 — feat: C追加\n",
             result);
     }
 

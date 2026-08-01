@@ -436,11 +436,13 @@ public sealed class MeetingCaptureWindow : Window
             var session = await _services.Meetings.GetSessionAsync(sessionId)
                 ?? throw new InvalidOperationException("セッションが見つかりません。");
             var markdown = MeetingMarkdownBuilder.Build(session, lines, null, settings.MeetingIncludeRawLog);
+            var targets = await _services.GetEntityLinkTargetsAsync();
+            var linked = MeetingMarkdownLinker.LinkBody(markdown, text => EntityLinker.Link(text, targets));
             var path = new MeetingMarkdownWriter().Write(
                 settings.MeetingOutputFolder,
                 DateOnly.FromDateTime(session.StartedAt.DateTime),
                 session.Title,
-                markdown);
+                linked);
             ExportResultPrompt.OfferToOpen(this, path);
         }
         catch (Exception exception)
@@ -589,11 +591,13 @@ public sealed class MeetingCaptureWindow : Window
         try
         {
             var markdown = MeetingMarkdownBuilder.Build(session, lines, formatted, settings.MeetingIncludeRawLog);
+            var targets = await _services.GetEntityLinkTargetsAsync();
+            var linked = MeetingMarkdownLinker.LinkBody(markdown, text => EntityLinker.Link(text, targets));
             var path = new MeetingMarkdownWriter().Write(
                 settings.MeetingOutputFolder,
                 DateOnly.FromDateTime(session.StartedAt.DateTime),
                 session.Title,
-                markdown);
+                linked);
             ExportResultPrompt.OfferToOpen(this, path);
         }
         catch (Exception exception)

@@ -4,9 +4,13 @@
 
 - `WorkLogAI.Core` (`net8.0`) contains domain records, storage/export abstractions,
   week calculation, non-secret settings policy, collection coordination,
-  deterministic mapping, the weekly coverage calculator, and the reminder/auto-start
-  decision contracts (`SlotReminderPlanner`, `IStartupRegistrar`). It has no UI or
-  database dependency.
+  deterministic mapping, the weekly coverage calculator, the reminder/auto-start
+  decision contracts (`SlotReminderPlanner`, `IStartupRegistrar`), and the Obsidian
+  vault sync's pure logic — entity dictionary models (`WorkEntity`,
+  `EntityObservation`, `EntityLinkTarget`/`EntityLinkTargets`), `EntityLinker`,
+  `DailyNoteBuilder`, `VaultSyncResult`, `VaultExtractionTextGatherer`,
+  `EntityExtractionBatcher`, and `MeetingMarkdownLinker`. It has no UI or database
+  dependency.
 - `WorkLogAI.Infrastructure` (`net8.0-windows`) provides SQLite persistence,
   embedded SQL migration, default/injectable database paths, isolated sample-data
   seeding, ClosedXML export (weekly and monthly), local Git/Codex/file collectors,
@@ -14,8 +18,10 @@
   client, the shared `TransientRetryPolicy`, `OpenAiKeyProbe`, MSAL-based
   Microsoft Graph sign-in and token caching, the Outlook mail/calendar REST
   collectors, meeting SQLite persistence and Markdown writer, the meeting AI
-  formatting client/payload builder, the meeting-to-weekly-source collector, and
-  `DataRetentionService`.
+  formatting client/payload builder, the meeting-to-weekly-source collector,
+  `DataRetentionService`, and the Obsidian vault sync's IO-facing pieces —
+  `SqliteEntityRepository`, `EntityExtractionClient`/`EntityExtractionPayloadBuilder`,
+  `DailyNoteWriter`/`ExclusionFileParser`, and `DailyNoteMeetingBuilder`.
 - `WorkLogAI.App` (`net8.0-windows`) is the WPF tray host. It owns the single-
   instance mutex, the Win32 hotkeys (quick capture and 議事録モード), quick
   capture, weekly history (including the **削除済みを表示** toggle and
@@ -23,7 +29,8 @@
   timer, the tabbed settings window, the month picker and monthly summary export
   action, meeting capture/session-chooser/send-preview windows,
   `DeleteCardConfirmWindow`'s row-only-vs-row-and-source review deletion choice,
-  and UI composition.
+  the Obsidian vault sync picker (`VaultSyncWindow`) and tray action, and UI
+  composition.
 - `WorkLogAI.Tests` verifies boundaries and file output without using the production
   data directory.
 
@@ -522,6 +529,120 @@ deselects it, since content-hash deduplication keeps both source events distinct
 the same class of behavior an amended Git commit already produces for
 `LocalGitCollector`.
 
+## Obsidian vault sync flow
+
+```text
+tray 「Obsidianへ同期…」
+      |
+      v
+VaultSyncWindow -- 今週 / 先週 / 全期間(バックフィル) + AI抽出チェックボックス
+      |
+      v (extraction on + 送信前確認 on)
+count-based confirmation -- CountVaultExtractionTextsAsync (no network call)
+      |
+      v
+AppServices.SyncVaultAsync
+  1. entity-exclusions.md --ExclusionFileParser--> Entities.ReplaceExclusionsAsync
+  2. (optional) quick-note + formatted-meeting text --EntityExtractionBatcher-->
+     sequential EntityExtractionClient.ExtractAsync calls --> UpsertObservationsAsync
+  3. Entities.ListAsync --EntityLinkTargets.From--> EntityLinker.Link closure
+  4. per day in range: DailyNoteBuilder.Build --> DailyNoteWriter.Write
+      |
+      v
+{vault}/yyyy-MM-dd.md (one-way generated artifact, overwritten every sync)
+```
+
+`WorkEntity`/`EntityObservation`/`EntityLinkTarget` (`WorkLogAI.Core`) model the
+self-growing dictionary: a canonical name plus every alias it has accumulated, an
+occurrence count, and an `excluded` flag. `EntityLinkTargets.From(entities,
+minOccurrences)` is the one policy decision point — excluded entities and any whose
+`occurrence_count` is below the configured `vault.entity_link_min_occurrences`
+(default 2, settings key alongside `vault.daily_notes_folder`) never become link
+targets, so a name seen once stays plain text. `EntityLinker.Link` is a pure,
+longest-match-first, case-insensitive rewriter into `[[Canonical]]`/
+`[[Canonical|alias]]` wikilinks that never re-scans a replaced span and skips text
+already inside an existing `[[...]]` link — no IO, no dictionary lookups of its own.
+
+`EntityExtractionClient` (`WorkLogAI.Infrastructure`) mirrors `MeetingFormatClient`
+exactly: `store:false`, no tools, strict `text.format` JSON Schema, all-item
+`output_text` aggregation, bounded response read, and safe refusal/incomplete/
+error/malformed handling that never echoes request or response bodies.
+`EntityExtractionPayloadBuilder` sanitizes every text through `SafeTextSanitizer`
+and enforces a 100-text / 64 KiB hard cap per request; `EntityExtractionValidator`
+independently re-validates the model's structured output, dropping a single
+malformed item rather than failing the whole batch (a self-growing, best-effort
+dictionary tolerates losing one candidate far better than it tolerates an empty
+extraction). `SqliteEntityRepository.UpsertObservationsAsync` matches an
+observation by canonical name OR any existing alias (case-insensitive via
+`COLLATE NOCASE`), incrementing `occurrence_count`/`last_seen_at`, upgrading `kind`
+only while it is still `other`, and merging in new aliases on a first-owner-wins
+basis — a name already claimed as someone else's alias is silently skipped rather
+than reassigned.
+
+`AppServices.SyncVaultAsync` runs its whole per-day loop (and, when extraction is
+on, its sequential `EntityExtractionClient` calls) inside `Task.Run`, exactly like
+`CollectLocalSourcesAsync`, reporting short Japanese status strings through an
+`IProgress<string>` that `App.xaml.cs` wires straight into the existing
+`ProgressStatusWindow`. `EntityExtractionBatcher.Batch` (pure, `WorkLogAI.Core`)
+splits the gathered text corpus (every non-blank quick-note text plus each
+formatted meeting's title and summary line, via `VaultExtractionTextGatherer`)
+into sequential requests within the client's caps; a single oversized text becomes
+a one-item batch of its own rather than being split. A per-batch extraction
+failure is collected into `VaultSyncResult.ExtractionErrors` (bounded to 5
+messages) and never aborts the rest of the sync — the dictionary and daily notes
+still update from whatever succeeded. `VaultSyncWindow`'s "AIで固有名詞を抽出して
+辞書を更新する" checkbox is disabled and force-unchecked when no OpenAI API key is
+stored; when it is checked and `ai.send_preview_enabled` is on,
+`CountVaultExtractionTextsAsync` computes the exact text count *before* any network
+call so the mandatory count-based confirmation is never a guess, then the tray flow
+applies simple Yes/No/Cancel semantics — Cancel aborts the whole sync, No proceeds
+with dictionary use and daily-note writing but skips extraction.
+
+`DailyNoteBuilder.Build` (`WorkLogAI.Core`, extended from its Phase-0 foundation)
+renders one day's Markdown — `## メモ`/`## 会議`/`## 開発`/`## 週報` sections, each
+omitted when its source list is empty, returning `null` (skip the file entirely)
+only when the whole day has nothing at all. Meeting lines render as
+`[[FileName|Title]]` (falling back to a bare `[[FileName]]` when the title is
+blank) so the daily note shows the meeting's title rather than its raw filename;
+development lines render as `{repo}: コミット{n}件 — {先頭のコミット件名}` (with
+「 ほか」 appended to the subject once `n` is more than 1) fully in Japanese.
+`DailyNoteMeetingBuilder` (`WorkLogAI.Infrastructure`) reconstructs each day's
+meeting filenames by reapplying `MeetingFileNameBuilder`'s exact base-name-plus-
+collision-suffix logic against only that day's sessions in `started_at` order,
+without touching disk — since no meeting-to-file mapping is persisted anywhere,
+this is a best-effort reconstruction that matches the real exported name as long
+as same-day, same-title sessions were exported in `started_at` order and no
+unrelated file happens to collide with a generated name; it is a documented,
+accepted limitation. `DailyNoteWriter.Write` always overwrites
+`{folder}/yyyy-MM-dd.md` in full — daily notes are a one-way generated artifact,
+never hand-merged, exactly like `MeetingMarkdownWriter`'s meeting files.
+
+`ExclusionFileParser` (pure, `WorkLogAI.Infrastructure`) reads the vault's
+`entity-exclusions.md` (one name per line, optional `[[...]]` wrapping, blank/`#`
+lines skipped) every sync; `Entities.ReplaceExclusionsAsync` then sets `excluded`
+to match that file exactly — first clearing every exclusion, then re-excluding
+only the names currently listed — so removing a line from the file un-excludes
+that entity on the next sync.
+
+`MeetingMarkdownLinker.LinkBody` (pure, `WorkLogAI.Core`) is the one piece shared
+between meeting export and vault sync: it splits a meeting Markdown document at
+the end of its YAML front matter's closing `---` line and applies the entity-link
+transform to the body only, so a wikilink is never accidentally rewritten into
+`participants:`/`title:`-bearing front matter. `MeetingCaptureWindow`'s two export
+paths (raw log only, and AI-formatted) both call
+`AppServices.GetEntityLinkTargetsAsync()` (the same dictionary-load-plus-threshold
+logic `SyncVaultAsync` uses) immediately before writing, so a meeting export always
+links against the dictionary's current state at export time; an empty dictionary
+leaves the Markdown unchanged.
+
+`全期間(バックフィル)` resolves its start date via
+`AppServices.GetVaultBackfillStartDateAsync`, the earlier of
+`IQuickNoteRepository.GetEarliestCreatedDateAsync` (`MIN(created_at)`) and
+`IMeetingRepository.GetEarliestStartedDateAsync` (`MIN(started_at)` — deliberately
+not `created_at`, which is only ever the session row's insertion wall-clock time
+and would make a poor backfill boundary), falling back to today when there is no
+data at all.
+
 ## Persistence
 
 Embedded SQL migrations run in version order inside a transaction according to
@@ -532,8 +653,10 @@ initial migration, `003_meeting_mode.sql` adds the three 議事録モード tabl
 default `internal`) — the column, model field, and repository mapping remain in
 place, but the product surface no longer exposes or reads it: there is no
 review-time category selector, and the exporter no longer groups or labels by
-it, so the stored value is dormant data carried through unchanged — and
-`005_suppressed_source_refs.sql` (schema v5) adds `suppressed_source_refs`:
+it, so the stored value is dormant data carried through unchanged —
+`005_suppressed_source_refs.sql` (schema v5) adds `suppressed_source_refs`, and
+`006_entities.sql` (schema v6) adds the self-growing entity dictionary behind the
+Obsidian vault sync (see Obsidian vault sync flow below):
 
 - `quick_notes`
 - `source_events`
@@ -550,6 +673,12 @@ it, so the stored value is dormant data carried through unchanged — and
   (see Permanent deletion and history editing above); `SuppressSourceRefsAsync`
   inserts via `INSERT OR IGNORE` (re-suppressing an already-suppressed ref is a
   no-op) and `UnsuppressSourceRefsAsync` deletes by ref
+- `entities` (`id`, `canonical_name` unique `COLLATE NOCASE`, `kind`,
+  `occurrence_count`, `first_seen_at`, `last_seen_at`, `excluded`, `created_at`) and
+  `entity_aliases` (`id`, `entity_id`, `alias` unique `COLLATE NOCASE`, indexed on
+  `entity_id`) — `COLLATE NOCASE` on both unique text columns is what lets
+  `SqliteEntityRepository` do every canonical/alias match case-insensitively without
+  any `ToLower` normalization in C#
 
 Connections are short-lived and created from an injected path provider. Soft delete
 sets `quick_notes.deleted_at`; reopen sets it back to `NULL`. `UpdateTextAsync`
@@ -665,9 +794,11 @@ offers to open the file afterward via `ExportResultPrompt`'s owner-less overload
 call site of `ExportResultPrompt`, which are all `Window` subclasses using `this`).
 
 The settings window is organized into a `TabControl` with five tabs
-(基本/収集/AI/Microsoft 365/議事録) at a fixed 560×560 size, replacing the earlier
-single scrolling column; every control, event handler, and validation rule moved
-into its tab unchanged.
+(基本/収集/AI/Microsoft 365/議事録/Obsidian) at a fixed 560×560 size, replacing the
+earlier single scrolling column; every control, event handler, and validation rule
+moved into its tab unchanged. The 議事録/Obsidian tab additionally gained
+デイリーノート出力フォルダ and リンク化の最低出現回数 (save-time validated as an
+integer ≥1) alongside its original three 議事録 controls.
 
 ## Excel contract
 

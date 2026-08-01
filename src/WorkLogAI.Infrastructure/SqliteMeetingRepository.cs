@@ -329,6 +329,18 @@ public sealed class SqliteMeetingRepository(SqliteConnectionFactory connectionFa
         return results;
     }
 
+    public async Task<DateOnly?> GetEarliestStartedDateAsync(CancellationToken cancellationToken = default)
+    {
+        await using var connection = connectionFactory.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT MIN(started_at) FROM meeting_sessions;";
+        var result = await command.ExecuteScalarAsync(cancellationToken);
+        return result is string text
+            ? DateOnly.FromDateTime(DateTimeOffset.Parse(text, CultureInfo.InvariantCulture).DateTime)
+            : null;
+    }
+
     private static MeetingSummary ReadSummary(SqliteDataReader reader) => new(
         Guid.Parse(reader.GetString(0)),
         Guid.Parse(reader.GetString(1)),
