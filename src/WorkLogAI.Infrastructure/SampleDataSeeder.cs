@@ -21,6 +21,17 @@ public sealed class SampleDataSeeder
     public async Task SeedIfEmptyAsync(CancellationToken cancellationToken = default)
     {
         var now = DateTimeOffset.Now;
+        // Seed inside the current Monday-start week rather than at now-relative
+        // offsets: "yesterday" crosses into the previous week when run on a
+        // Monday, which made the sample event invisible to current-week queries.
+        var week = new WeekRangeCalculator().GetWeekRange(DateOnly.FromDateTime(now.DateTime));
+        var weekStartLocal = week.Start.ToDateTime(TimeOnly.MinValue);
+        DateTimeOffset AtWeekHour(double hours)
+        {
+            var local = weekStartLocal.AddHours(hours);
+            return new DateTimeOffset(local, TimeZoneInfo.Local.GetUtcOffset(local));
+        }
+
         var existing = await _notes.ListAsync(
             now.AddYears(-10),
             now.AddYears(1),
@@ -28,21 +39,17 @@ public sealed class SampleDataSeeder
             cancellationToken: cancellationToken);
         if (existing.Count == 0)
         {
-            await _notes.CreateAsync("ハイトゲージ教育を継続", now.AddDays(-2), cancellationToken);
-            await _notes.CreateAsync("初品5点を検査し全数合格、出荷指示", now.AddDays(-1), cancellationToken);
-            await _notes.CreateAsync("検査姿勢改善のため台車を試したが不採用", now, cancellationToken);
+            await _notes.CreateAsync("ハイトゲージ教育を継続", AtWeekHour(9), cancellationToken);
+            await _notes.CreateAsync("初品5点を検査し全数合格、出荷指示", AtWeekHour(10), cancellationToken);
+            await _notes.CreateAsync("検査姿勢改善のため台車を試したが不採用", AtWeekHour(11), cancellationToken);
         }
 
         if (_sourceEvents is null || _candidates is null)
         {
             return;
         }
-
-        var sampleLocalTime = now.Date.AddDays(-1).AddHours(12);
         var sample = SourceEventFactory.Create(
-            new DateTimeOffset(
-                sampleLocalTime,
-                TimeZoneInfo.Local.GetUtcOffset(sampleLocalTime)),
+            AtWeekHour(12),
             SourceTypes.Git,
             "サンプル: ローカル収集機能を実装",
             "変更ファイル: src/Sample.cs。統計: +12 / -2",
@@ -51,7 +58,6 @@ public sealed class SampleDataSeeder
             0.9);
         await _sourceEvents.InsertIfNewAsync(sample, cancellationToken);
 
-        var week = new WeekRangeCalculator().GetWeekRange(DateOnly.FromDateTime(now.DateTime));
         var existingCandidates = await _candidates.ListAsync(week.Start, cancellationToken);
         if (existingCandidates.Count == 0)
         {
