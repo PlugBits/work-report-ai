@@ -460,6 +460,13 @@ public partial class App : System.Windows.Application
         _meetingHotKey = null;
     }
 
+    /// <summary>
+    /// Lets <see cref="SettingsWindow"/>'s notification test button open the same
+    /// quick-capture window a real reminder toast would, without needing its own
+    /// reference to the running <see cref="App"/> instance.
+    /// </summary>
+    public void ShowQuickCaptureForTest() => ShowQuickCapture();
+
     public void ApplyMeetingHotKeySetting(bool enabled)
     {
         var currentlyEnabled = _meetingHotKey is not null;
