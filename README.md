@@ -77,9 +77,12 @@ corners) applied consistently across all windows.
   row pre-filled with that date.
 - An opt-in weekday reminder covers the day in two half-day slots (settings default
   11:00 and 16:00, configurable as a comma-separated `HH:mm` list): each slot shows
-  a tray balloon if nothing has been noted since the previous slot's time (the
+  a reminder if nothing has been noted since the previous slot's time (the
   first slot covers since midnight) and that slot hasn't already fired today.
-  Clicking the balloon opens quick capture. Optional **スマート通知** acceleration
+  The reminder is an app-drawn toast window (bottom-right corner, with a
+  今すぐ記録 button that opens quick capture) rather than a
+  `NotifyIcon.ShowBalloonTip` balloon, so it's always shown regardless of the
+  Windows per-app notification/banner setting. Optional **スマート通知** acceleration
   fires a hungry slot up to 60 minutes early when the user has just returned from
   a break — detected locally as a Windows session unlock or 10+ minutes of
   keyboard/mouse idle followed by renewed activity. (Git-commit activity was
