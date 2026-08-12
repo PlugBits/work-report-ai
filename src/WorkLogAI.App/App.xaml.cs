@@ -231,7 +231,6 @@ public partial class App : System.Windows.Application
         menu.Items.Add("終了", null, (_, _) => Shutdown());
         _trayIcon.ContextMenuStrip = menu;
         _trayIcon.DoubleClick += (_, _) => ShowQuickCapture();
-        _trayIcon.BalloonTipClicked += (_, _) => ShowQuickCapture();
     }
 
     private void StartReminderTimer()
@@ -376,7 +375,7 @@ public partial class App : System.Windows.Application
                 ? "午前の業務メモがまだありません。Ctrl+Alt+W で1行記録しましょう。"
                 : $"{slotTimes[slotIndex - 1]:HH:mm}以降の業務メモがありません。Ctrl+Alt+W で1行記録しましょう。";
 
-            _trayIcon.ShowBalloonTip(10000, "WorkLog AI", message, Forms.ToolTipIcon.Info);
+            ReminderToastWindow.ShowReminder(message, ShowQuickCapture);
         }
         catch (Exception exception)
         {
