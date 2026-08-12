@@ -89,7 +89,10 @@ corners) applied consistently across all windows.
   considered as a possible smart trigger and deliberately rejected as too noisy;
   there is no repository monitoring here.) The check runs from a 60-second tray
   timer against a pure `SlotReminderPlanner` decision; each slot's last-shown date
-  is stored as its own plain settings state key.
+  is stored as its own plain settings state key. A **通知テスト** button next to the
+  スマート通知 checkbox in settings shows the same toast on demand so the sound and
+  layout can be verified without waiting for a real slot or consuming its
+  once-per-day trigger.
 - An opt-in **Windowsログイン時に自動起動する** checkbox in settings registers the
   app under the current user's `HKCU\...\Run` key. Registration requires the
   published, self-contained EXE — running through `dotnet run`/the dotnet host is

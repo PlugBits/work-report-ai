@@ -42,6 +42,12 @@ public sealed class SettingsWindow : Window
     private readonly CheckBox _reminderEnabled = new() { Content = "平日にメモ0件をリマインド" };
     private readonly TextBox _reminderTimes = new();
     private readonly CheckBox _reminderSmartEnabled = new() { Content = "スマート通知（離席復帰で前倒し）" };
+    private readonly Button _reminderTest = new()
+    {
+        Content = "通知テスト",
+        Padding = new Thickness(10, 4, 10, 4),
+        Margin = new Thickness(12, 0, 0, 0)
+    };
     private readonly CheckBox _autoStart = new() { Content = "Windowsログイン時に自動起動する" };
     private readonly TextBox _graphClientId = new();
     private readonly TextBox _graphTenantId = new();
@@ -95,7 +101,20 @@ public sealed class SettingsWindow : Window
         AddRow(basicGrid, basicRow++, "自動起動", _autoStart);
         AddRow(basicGrid, basicRow++, "メモ0件リマインド", _reminderEnabled);
         AddRow(basicGrid, basicRow++, "通知時刻 (HH:mm、カンマ区切り)", _reminderTimes);
-        AddRow(basicGrid, basicRow++, "スマート通知", _reminderSmartEnabled);
+        _reminderTest.Click += (_, _) => ReminderToastWindow.ShowReminder(
+            "これはテスト通知です。リマインダーはこの形式で表示されます。",
+            () =>
+            {
+                if (System.Windows.Application.Current is App app)
+                {
+                    app.ShowQuickCaptureForTest();
+                }
+            });
+        AddRow(basicGrid, basicRow++, "スマート通知", new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Children = { _reminderSmartEnabled, _reminderTest }
+        });
 
         // 「収集」: ローカルGit, Codexセッション, 更新ファイル対象, 収集範囲の説明文
         var collectionGrid = NewTabGrid(4);
