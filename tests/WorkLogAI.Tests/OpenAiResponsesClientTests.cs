@@ -376,4 +376,62 @@ public sealed class OpenAiResponsesClientTests
             return Task.FromResult(existed);
         }
     }
+
+    [Fact]
+    public async Task Custom_instructions_reach_the_outbound_payload_appended_to_the_base_instructions()
+    {
+        var source = Event("body", "evidence");
+        var handler = new CaptureHandler(EnvelopeResponse(CandidateJson(source.Id)));
+        var range = new WeekRange(new DateOnly(2026, 7, 27), new DateOnly(2026, 8, 2));
+
+        var result = await Client(handler).GenerateAsync(
+            new AiGenerationRequest(range, "gpt-5.6-sol", [source], "常に敬体で書く"));
+
+        Assert.True(result.Succeeded);
+        using var request = JsonDocument.Parse(handler.Body);
+        var instructions = request.RootElement.GetProperty("instructions").GetString()!;
+        Assert.StartsWith(AiPromptBuilder.Instructions, instructions);
+        Assert.EndsWith("\n\n[ユーザー追加指示]\n常に敬体で書く", instructions);
+
+        var plain = new CaptureHandler(EnvelopeResponse(CandidateJson(source.Id)));
+        await Client(plain).GenerateAsync(new AiGenerationRequest(range, "gpt-5.6-sol", [source]));
+        using var plainRequest = JsonDocument.Parse(plain.Body);
+        Assert.Equal(
+            AiPromptBuilder.Instructions,
+            plainRequest.RootElement.GetProperty("instructions").GetString());
+    }
+
+    [Fact]
+    public async Task Candidate_whose_evidence_is_on_another_date_is_dropped_and_counted_while_others_survive()
+    {
+        var source = Event("body", "evidence");
+        var json = JsonSerializer.Serialize(new
+        {
+            candidates = new[]
+            {
+                new
+                {
+                    date = "2026-07-30", workItem = "A", activity = "a", resultOrNext = "",
+                    status = "pending", confidence = .9,
+                    sourceEventIds = new[] { source.Id.ToString() },
+                    needsConfirmation = false, confirmationQuestion = (string?)null
+                },
+                new
+                {
+                    date = "2026-07-29", workItem = "B", activity = "b", resultOrNext = "",
+                    status = "pending", confidence = .9,
+                    sourceEventIds = new[] { source.Id.ToString() },
+                    needsConfirmation = false, confirmationQuestion = (string?)null
+                }
+            }
+        });
+        var range = new WeekRange(new DateOnly(2026, 7, 27), new DateOnly(2026, 8, 2));
+
+        var result = await Client(new CaptureHandler(EnvelopeResponse(json))).GenerateAsync(
+            new AiGenerationRequest(range, "gpt-5.6-sol", [source]));
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("A", Assert.Single(result.Candidates).WorkItem);
+        Assert.Equal(1, result.SameDayRejectedCount);
+    }
 }

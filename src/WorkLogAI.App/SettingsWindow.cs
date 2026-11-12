@@ -26,6 +26,8 @@ public sealed class SettingsWindow : Window
     private readonly TextBox _codexFolder = new();
     private readonly TextBox _recentFolders = MultiLineTextBox();
     private readonly TextBox _model = new();
+    private readonly TextBox _aiCustomInstructions = CustomInstructionsTextBox();
+    private readonly TextBox _meetingCustomInstructions = CustomInstructionsTextBox();
     private readonly CheckBox _preview = new() { Content = "送信前にプレビューを表示" };
     private readonly PasswordBox _apiKey = new();
     private readonly CheckBox _removeApiKey = new() { Content = "保存済みAPIキーを削除" };
@@ -130,9 +132,10 @@ public sealed class SettingsWindow : Window
         });
 
         // 「AI」: OpenAIモデル, 送信前確認, OpenAI APIキー, キー状態(+テストボタン群), 秘密情報の説明文
-        var aiGrid = NewTabGrid(5);
+        var aiGrid = NewTabGrid(6);
         var aiRow = 0;
         AddRow(aiGrid, aiRow++, "OpenAIモデル", _model);
+        AddRow(aiGrid, aiRow++, "AI追加指示\n(週報生成用)", _aiCustomInstructions);
         AddRow(aiGrid, aiRow++, "送信前確認", _preview);
         AddRow(aiGrid, aiRow++, "OpenAI APIキー", _apiKey);
         _testApiKey.Click += TestApiKeyAsync;
@@ -173,13 +176,14 @@ public sealed class SettingsWindow : Window
 
         // 「議事録/Obsidian」: 議事録出力フォルダ, 生ログをMDに同梱, 議事録ホットキー(Ctrl+Alt+M),
         // デイリーノート出力フォルダ, リンク化の最低出現回数
-        var meetingGrid = NewTabGrid(5);
+        var meetingGrid = NewTabGrid(6);
         var meetingRow = 0;
         AddRow(meetingGrid, meetingRow++, "議事録出力フォルダ", _meetingOutputFolder);
         AddRow(meetingGrid, meetingRow++, "議事録Markdown", _meetingIncludeRawLog);
         AddRow(meetingGrid, meetingRow++, "議事録ホットキー", _meetingHotkeyEnabled);
         AddRow(meetingGrid, meetingRow++, "デイリーノート出力フォルダ", _vaultDailyNotesFolder);
         AddRow(meetingGrid, meetingRow++, "リンク化の最低出現回数", _vaultEntityLinkMinOccurrences);
+        AddRow(meetingGrid, meetingRow++, "AI追加指示\n(議事録整形用)", _meetingCustomInstructions);
 
         var tabControl = new TabControl();
         tabControl.Items.Add(new TabItem { Header = "基本", Content = TabScrollHost(basicGrid) });
@@ -263,6 +267,8 @@ public sealed class SettingsWindow : Window
         _codexFolder.Text = values.CodexSessionFolder ?? string.Empty;
         _recentFolders.Text = string.Join(Environment.NewLine, values.RecentFileFolders);
         _model.Text = values.OpenAiModel;
+        _aiCustomInstructions.Text = values.AiCustomInstructions;
+        _meetingCustomInstructions.Text = values.MeetingCustomInstructions;
         _preview.IsChecked = values.SendPreviewEnabled;
         _reminderEnabled.IsChecked = values.ReminderEnabled;
         _reminderTimes.Text = string.Join(", ", values.ReminderTimes.Select(time => time.ToString("HH:mm")));
@@ -460,7 +466,9 @@ public sealed class SettingsWindow : Window
                 _meetingIncludeRawLog.IsChecked == true,
                 _meetingHotkeyEnabled.IsChecked == true,
                 _vaultDailyNotesFolder.Text.Trim(),
-                vaultEntityLinkMinOccurrences));
+                vaultEntityLinkMinOccurrences,
+                _aiCustomInstructions.Text.Trim(),
+                _meetingCustomInstructions.Text.Trim()));
             if (_removeApiKey.IsChecked == true)
             {
                 await _credentials.DeleteAsync(CredentialTargets.OpenAiApiKey);
@@ -522,6 +530,15 @@ public sealed class SettingsWindow : Window
     {
         AcceptsReturn = true,
         Height = 58,
+        VerticalScrollBarVisibility = ScrollBarVisibility.Auto
+    };
+
+    private static TextBox CustomInstructionsTextBox() => new()
+    {
+        AcceptsReturn = true,
+        TextWrapping = TextWrapping.Wrap,
+        Height = 100,
+        MaxLength = AppSettingsService.MaximumCustomInstructionsLength,
         VerticalScrollBarVisibility = ScrollBarVisibility.Auto
     };
 

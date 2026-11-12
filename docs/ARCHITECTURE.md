@@ -249,6 +249,8 @@ Candidates.SetSelectedAsync(supersededIds, false) -- deselects fully-covered,
 CandidateWindow banner reports DeselectedLocalCount
 ```
 
+Generation is same-day constrained: the prompt requires per-date candidates, `AiCandidateValidator` drops (and counts) any candidate whose sent-event local dates are not all equal to the candidate date, and `CandidateMergeService` only merges equal `WorkDate`s; the optional `ai.custom_instructions` text is appended to the end of the fixed instructions (append-only, schema untouched).
+
 `SourceEventDeduplicator.LatestPerRef` groups events by `SourceRef` (events with a
 blank ref pass through untouched) and keeps only the newest per group, using
 `CollectedAt` then `OccurredAt` then ordinal `Id` as a fully deterministic
@@ -477,6 +479,8 @@ MeetingSummaryCollector -- IMeetingRepository.ListFormattedInRangeAsync -->
 existing LocalCollectionCoordinator dedup/mapping pipeline --> completed,
 pre-selected 会議・打合せ candidate
 ```
+
+The meeting prompt may carry a separate `meeting.custom_instructions` text (4000-character cap) appended after the fixed instructions by `CustomInstructionComposer`; it is never shared with the weekly prompt, and the send preview shows 「追加指示あり」 when set.
 
 Capture is a thin, immediate-persist loop: `MeetingLineParser` (pure) strips a
 leading `@`/`＠` (宿題) or `!`/`！` (決定) marker and `MeetingCaptureWindow` appends

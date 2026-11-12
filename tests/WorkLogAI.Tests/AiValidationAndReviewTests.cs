@@ -50,11 +50,16 @@ public sealed class AiValidationAndReviewTests
     {
         var common = Guid.NewGuid();
         var second = Guid.NewGuid();
+        // Same-date candidates tie-break on Id in CandidateMergeService's ordering;
+        // fixed ids keep "left" deterministically first so the category assertion
+        // below cannot flake on random Guid ordering.
         var left = Candidate(
-            Guid.NewGuid(), new DateOnly(2026, 7, 29), "検査改善", "姿勢を確認",
+            new Guid("00000000-0000-0000-0000-000000000001"),
+            new DateOnly(2026, 7, 29), "検査改善", "姿勢を確認",
             "completed", [common], result: "確認済み") with { Category = ReportCategories.External };
         var right = Candidate(
-            Guid.NewGuid(), new DateOnly(2026, 7, 30), "検査改善", "台車を試行",
+            new Guid("00000000-0000-0000-0000-000000000002"),
+            new DateOnly(2026, 7, 29), "検査改善", "台車を試行",
             "pending", [common, second], result: "");
         var unrelated = Candidate(
             Guid.NewGuid(), new DateOnly(2026, 8, 2), "教育", "測定教育",
@@ -189,4 +194,141 @@ public sealed class AiValidationAndReviewTests
             true,
             false,
             evidence);
+
+    private static readonly WeekRange SameDayRange =
+        new(new DateOnly(2026, 7, 27), new DateOnly(2026, 8, 2));
+
+    [Fact]
+    public void Validator_accepts_candidate_whose_evidence_all_falls_on_its_date()
+    {
+        var a = Guid.NewGuid();
+        var b = Guid.NewGuid();
+        var dates = new Dictionary<Guid, DateOnly>
+        {
+            [a] = new(2026, 7, 30),
+            [b] = new(2026, 7, 30)
+        };
+        var payload = Payload("2026-07-30", "pending", a);
+        payload.SourceEventIds.Add(b.ToString());
+
+        var result = new AiCandidateValidator().Validate(
+            new AiCandidateEnvelope { Candidates = [payload] }, SameDayRange, [a, b], dates);
+
+        Assert.Single(result.Accepted);
+        Assert.Empty(result.Rejections);
+        Assert.Equal(0, result.SameDayRejectedCount);
+    }
+
+    [Fact]
+    public void Validator_drops_only_the_candidate_whose_evidence_spans_two_dates()
+    {
+        var monday = Guid.NewGuid();
+        var tuesday = Guid.NewGuid();
+        var good = Guid.NewGuid();
+        var dates = new Dictionary<Guid, DateOnly>
+        {
+            [monday] = new(2026, 7, 27),
+            [tuesday] = new(2026, 7, 28),
+            [good] = new(2026, 7, 29)
+        };
+        var spanning = Payload("2026-07-27", "pending", monday);
+        spanning.SourceEventIds.Add(tuesday.ToString());
+
+        var result = new AiCandidateValidator().Validate(
+            new AiCandidateEnvelope { Candidates = [spanning, Payload("2026-07-29", "pending", good)] },
+            SameDayRange,
+            [monday, tuesday, good],
+            dates);
+
+        var accepted = Assert.Single(result.Accepted);
+        Assert.Equal([good], accepted.SourceEventIds);
+        Assert.Equal(1, result.SameDayRejectedCount);
+        Assert.Equal([AiCandidateValidator.SameDayRejection], result.Rejections);
+    }
+
+    [Fact]
+    public void Validator_drops_candidate_whose_date_differs_from_its_single_evidence_date()
+    {
+        var evidence = Guid.NewGuid();
+        var dates = new Dictionary<Guid, DateOnly> { [evidence] = new(2026, 7, 28) };
+
+        var result = new AiCandidateValidator().Validate(
+            new AiCandidateEnvelope { Candidates = [Payload("2026-07-30", "pending", evidence)] },
+            SameDayRange,
+            [evidence],
+            dates);
+
+        Assert.Empty(result.Accepted);
+        Assert.Equal(1, result.SameDayRejectedCount);
+    }
+
+    [Fact]
+    public void Validator_without_event_dates_keeps_legacy_behaviour()
+    {
+        var evidence = Guid.NewGuid();
+
+        var result = new AiCandidateValidator().Validate(
+            new AiCandidateEnvelope { Candidates = [Payload("2026-07-30", "pending", evidence)] },
+            SameDayRange,
+            [evidence]);
+
+        Assert.Single(result.Accepted);
+        Assert.Equal(0, result.SameDayRejectedCount);
+    }
+
+    [Fact]
+    public void Merge_service_refuses_cross_date_merge_but_still_merges_same_date()
+    {
+        var shared = Guid.NewGuid();
+        var day1 = Candidate(Guid.NewGuid(), new DateOnly(2026, 7, 29), "検査改善", "姿勢を確認", "completed", [shared]);
+        var day2 = Candidate(Guid.NewGuid(), new DateOnly(2026, 7, 30), "検査改善", "姿勢を確認", "completed", [shared]);
+        var sameDay = Candidate(Guid.NewGuid(), new DateOnly(2026, 7, 29), "検査改善", "姿勢を確認", "completed", [Guid.NewGuid()]);
+
+        Assert.Equal(2, new CandidateMergeService().Merge([day1, day2]).Count);
+
+        var merged = new CandidateMergeService().Merge([day1, day2, sameDay]);
+        Assert.Equal(2, merged.Count);
+        Assert.Contains(merged, item => item.WorkDate == new DateOnly(2026, 7, 29) && item.SourceEventIds.Count == 2);
+        Assert.Contains(merged, item => item.WorkDate == new DateOnly(2026, 7, 30));
+    }
+
+    [Fact]
+    public void Prompt_contains_same_day_consolidation_instruction_and_event_dates()
+    {
+        var source = SourceEventFactory.Create(
+            new DateTimeOffset(2026, 7, 30, 23, 30, 0, TimeSpan.FromHours(9)),
+            SourceTypes.Git, "t", "b", "e", "ref", .9);
+
+        var package = new AiPromptBuilder().Build(SameDayRange, [source]);
+
+        Assert.Contains("同一日付内のみ", package.Instructions);
+        Assert.Contains("日ごとに別々のcandidate", package.Instructions);
+        Assert.Contains("dateはその根拠イベントの日付と一致", package.Instructions);
+        Assert.Equal(new DateOnly(2026, 7, 30), package.IncludedEventDates![source.Id]);
+    }
+
+    [Fact]
+    public void Custom_instructions_are_appended_at_the_end_only_when_present()
+    {
+        var baseline = new AiPromptBuilder().Build(SameDayRange, []);
+        var blank = new AiPromptBuilder().Build(SameDayRange, [], "  \n ");
+        var custom = new AiPromptBuilder().Build(SameDayRange, [], "  語尾は「です・ます」  ");
+
+        Assert.Equal(AiPromptBuilder.Instructions, baseline.Instructions);
+        Assert.Equal(AiPromptBuilder.Instructions, blank.Instructions);
+        Assert.StartsWith(AiPromptBuilder.Instructions, custom.Instructions);
+        Assert.EndsWith("\n\n[ユーザー追加指示]\n語尾は「です・ます」", custom.Instructions);
+        Assert.Equal(baseline.Input, custom.Input);
+    }
+
+    [Fact]
+    public void Generation_and_meeting_requests_default_to_no_custom_instructions()
+    {
+        Assert.Equal(string.Empty, new AiGenerationRequest(SameDayRange, "m", []).CustomInstructions);
+        Assert.Equal(0, new AiGenerationResult([], false, 0).SameDayRejectedCount);
+        var session = new MeetingSession(
+            Guid.NewGuid(), "t", "", MeetingKind.Meeting, DateTimeOffset.Now, null,
+            MeetingStatus.Closed, DateTimeOffset.Now);
+        Assert.Equal(string.Empty, new MeetingFormatRequest(session, [], "m").CustomInstructions);
+    }
 }
