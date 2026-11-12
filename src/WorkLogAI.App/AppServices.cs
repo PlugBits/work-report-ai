@@ -178,7 +178,7 @@ public sealed class AppServices
     {
         var settings = await Settings.LoadAsync(cancellationToken);
         var events = await SourceEvents.ListAsync(range, cancellationToken);
-        var prompt = new AiPromptBuilder().Build(range, events);
+        var prompt = new AiPromptBuilder().Build(range, events, settings.AiCustomInstructions);
         var hasCredential = !string.IsNullOrWhiteSpace(
             await Credentials.GetAsync(CredentialTargets.OpenAiApiKey, cancellationToken));
         var sources = events
@@ -191,7 +191,8 @@ public sealed class AppServices
             events.Count,
             prompt.IncludedEventIds.Count,
             prompt.Truncated,
-            sources);
+            sources,
+            !string.IsNullOrWhiteSpace(settings.AiCustomInstructions));
     }
 
     public async Task<AiGenerationResult> GenerateAiCandidatesAsync(
@@ -207,7 +208,7 @@ public sealed class AppServices
             new AiPromptBuilder(),
             new AiCandidateValidator());
         var result = await client.GenerateAsync(
-            new AiGenerationRequest(range, settings.OpenAiModel, events),
+            new AiGenerationRequest(range, settings.OpenAiModel, events, settings.AiCustomInstructions),
             cancellationToken);
         if (result.Succeeded)
         {
@@ -238,7 +239,8 @@ public sealed class AppServices
         using var httpClient = new HttpClient();
         var client = new MeetingFormatClient(httpClient, Credentials);
         return await client.FormatAsync(
-            new MeetingFormatRequest(session, includedLines, settings.OpenAiModel),
+            new MeetingFormatRequest(
+                session, includedLines, settings.OpenAiModel, settings.MeetingCustomInstructions),
             cancellationToken);
     }
 
@@ -482,4 +484,5 @@ public sealed record GenerationPreview(
     int AvailableEvents,
     int SentEvents,
     bool Truncated,
-    IReadOnlyDictionary<string, int> SourceCounts);
+    IReadOnlyDictionary<string, int> SourceCounts,
+    bool HasCustomInstructions = false);

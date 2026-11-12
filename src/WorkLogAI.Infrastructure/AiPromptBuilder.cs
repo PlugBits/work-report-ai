@@ -10,16 +10,35 @@ public sealed record AiPromptPackage(
     string Instructions,
     string Input,
     IReadOnlyList<Guid> IncludedEventIds,
-    bool Truncated);
+    bool Truncated,
+    IReadOnlyDictionary<Guid, DateOnly>? IncludedEventDates = null);
+
+/// <summary>
+/// Append-only composition of user-supplied custom instructions onto a fixed base
+/// instruction text. The base text and the Structured Outputs schema are never altered.
+/// </summary>
+public static class CustomInstructionComposer
+{
+    public const string Header = "[ユーザー追加指示]";
+
+    public static string Append(string baseInstructions, string? customInstructions) =>
+        string.IsNullOrWhiteSpace(customInstructions)
+            ? baseInstructions
+            : $"{baseInstructions}\n\n{Header}\n{customInstructions.Trim()}";
+}
 
 public sealed partial class AiPromptBuilder(
     int maximumEvents = 200,
     int maximumUtf8Bytes = 256 * 1024)
 {
-    public AiPromptPackage Build(WeekRange range, IReadOnlyCollection<SourceEvent> sourceEvents)
+    public AiPromptPackage Build(
+        WeekRange range,
+        IReadOnlyCollection<SourceEvent> sourceEvents,
+        string? customInstructions = null)
     {
         var selected = new List<object>();
         var ids = new List<Guid>();
+        var dates = new Dictionary<Guid, DateOnly>();
         var truncated = false;
         var deduplicated = SourceEventDeduplicator.LatestPerRef(sourceEvents);
         foreach (var sourceEvent in deduplicated
@@ -59,6 +78,7 @@ public sealed partial class AiPromptBuilder(
             }
             selected.Add(item);
             ids.Add(sourceEvent.Id);
+            dates[sourceEvent.Id] = DateOnly.FromDateTime(sourceEvent.OccurredAt.DateTime);
         }
 
         var input = JsonSerializer.Serialize(new
@@ -67,14 +87,20 @@ public sealed partial class AiPromptBuilder(
             weekEnd = range.End.ToString("yyyy-MM-dd"),
             events = selected
         });
-        return new AiPromptPackage(Instructions, input, ids, truncated);
+        return new AiPromptPackage(
+            CustomInstructionComposer.Append(Instructions, customInstructions),
+            input,
+            ids,
+            truncated,
+            dates);
     }
 
     public const string Instructions = """
         Create concise Japanese weekly-report candidates using only the supplied evidence.
         Never add an achievement, decision, completion, or result unsupported by evidence.
         Calendar evidence alone must never imply completion.
-        Consolidate genuinely related multi-day work when appropriate while retaining every sourceEventId.
+        Consolidate genuinely related work when appropriate while retaining every sourceEventId.
+        候補の統合・要約は**同一日付内のみ**とする。複数日にわたる同種の作業は、日ごとに別々のcandidateとして出力すること。candidateのdateはその根拠イベントの日付と一致させること。
         Translate technical detail into a business-relevant activity or outcome without inventing facts.
         Prioritize education, improvement, problem solving, inspection, decisions, system development, and equipment work.
         Omit routine or purely administrative work.

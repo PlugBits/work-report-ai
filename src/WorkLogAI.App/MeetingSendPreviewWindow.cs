@@ -20,6 +20,7 @@ public sealed class MeetingSendPreviewWindow : Window
 {
     private readonly MeetingSession _session;
     private readonly string _model;
+    private readonly bool _hasCustomInstructions;
     private readonly List<(MeetingLine Line, CheckBox Box)> _items;
     private readonly TextBlock _header = new()
     {
@@ -27,11 +28,12 @@ public sealed class MeetingSendPreviewWindow : Window
         Margin = new Thickness(0, 0, 0, 8)
     };
 
-    public MeetingSendPreviewWindow(MeetingSession session, IReadOnlyList<MeetingLine> lines, string model)
+    public MeetingSendPreviewWindow(MeetingSession session, IReadOnlyList<MeetingLine> lines, string model, bool hasCustomInstructions = false)
     {
         AppTheme.Apply(this);
         _session = session;
         _model = model;
+        _hasCustomInstructions = hasCustomInstructions;
 
         Title = "送信前プレビュー - WorkLog AI";
         Width = 480;
@@ -121,6 +123,7 @@ public sealed class MeetingSendPreviewWindow : Window
         _header.Text =
             $"モデル: {_model}\n" +
             $"行数: {included.Count}/{_items.Count}\n" +
-            $"送信サイズ（概算）: {payload.Utf8ByteCount / 1024.0:0.0} KB";
+            $"送信サイズ（概算）: {payload.Utf8ByteCount / 1024.0:0.0} KB" +
+            (_hasCustomInstructions ? "\n追加指示あり" : string.Empty);
     }
 }

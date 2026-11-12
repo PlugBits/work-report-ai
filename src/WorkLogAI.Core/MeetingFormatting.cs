@@ -11,7 +11,8 @@ namespace WorkLogAI.Core;
 public sealed record MeetingFormatRequest(
     MeetingSession Session,
     IReadOnlyList<MeetingLine> Lines,
-    string Model);
+    string Model,
+    string CustomInstructions = "");
 
 /// <summary>
 /// Outcome of an AI meeting-formatting attempt. Mirrors <see cref="AiGenerationResult"/>'s

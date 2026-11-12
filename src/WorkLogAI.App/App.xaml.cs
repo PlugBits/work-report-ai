@@ -590,7 +590,9 @@ public partial class App : System.Windows.Application
                     $"対象週: {range.Start:yyyy/MM/dd}〜{range.End:yyyy/MM/dd}\n" +
                     $"送信イベント: {preview.SentEvents}/{preview.AvailableEvents}\n" +
                     $"内訳: {breakdown}\n" +
-                    $"切り詰め: {(preview.Truncated ? "あり" : "なし")}\n\n" +
+                    $"切り詰め: {(preview.Truncated ? "あり" : "なし")}\n" +
+                    (preview.HasCustomInstructions ? "追加指示: あり\n" : string.Empty) +
+                    "\n" +
                     "APIキー、sourceRef、diff、ソース本文、function outputは送信しません。",
                     "送信前プレビュー",
                     MessageBoxButton.YesNo,
@@ -627,6 +629,10 @@ public partial class App : System.Windows.Application
             if (generation.DeselectedLocalCount > 0)
             {
                 banner += $"元メモ由来の行 {generation.DeselectedLocalCount}件の採用を外しました(AI候補に置換)。";
+            }
+            if (generation.SameDayRejectedCount > 0)
+            {
+                banner += $"同日制約違反のため {generation.SameDayRejectedCount}件の候補を除外しました。";
             }
             new CandidateWindow(_services, range, banner).Show();
         }

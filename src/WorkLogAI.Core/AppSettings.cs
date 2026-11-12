@@ -13,6 +13,11 @@ public static class AppSettingKeys
     public const string RecentFileFolders = "collection.recent_file_folders";
     public const string OpenAiModel = "ai.openai_model";
     public const string SendPreviewEnabled = "ai.send_preview_enabled";
+    /// <summary>Free-text instructions appended to the weekly-report AI prompt (never shared with the meeting prompt).</summary>
+    public const string AiCustomInstructions = "ai.custom_instructions";
+
+    /// <summary>Free-text instructions appended to the meeting-formatting AI prompt (separate from <see cref="AiCustomInstructions"/>).</summary>
+    public const string MeetingCustomInstructions = "meeting.custom_instructions";
     public const string ReminderEnabled = "reminder.enabled";
     public const string ReminderSmartEnabled = "reminder.smart_enabled";
 
@@ -91,6 +96,8 @@ public sealed class AppSettingsService(ISettingsStore store)
         var meetingIncludeRawLogValue = await store.GetAsync(AppSettingKeys.MeetingIncludeRawLog, cancellationToken);
         var meetingHotkeyEnabledValue = await store.GetAsync(AppSettingKeys.MeetingHotkeyEnabled, cancellationToken);
         var vaultDailyNotesFolder = await store.GetAsync(AppSettingKeys.VaultDailyNotesFolder, cancellationToken);
+        var aiCustomInstructions = await store.GetAsync(AppSettingKeys.AiCustomInstructions, cancellationToken);
+        var meetingCustomInstructions = await store.GetAsync(AppSettingKeys.MeetingCustomInstructions, cancellationToken);
         var vaultEntityLinkMinOccurrencesValue = await store.GetAsync(
             AppSettingKeys.VaultEntityLinkMinOccurrences, cancellationToken);
 
@@ -126,7 +133,9 @@ public sealed class AppSettingsService(ISettingsStore store)
             !bool.TryParse(meetingIncludeRawLogValue, out var meetingIncludeRawLog) || meetingIncludeRawLog,
             !bool.TryParse(meetingHotkeyEnabledValue, out var meetingHotkeyEnabled) || meetingHotkeyEnabled,
             string.IsNullOrWhiteSpace(vaultDailyNotesFolder) ? string.Empty : vaultDailyNotesFolder.Trim(),
-            ParseEntityLinkMinOccurrences(vaultEntityLinkMinOccurrencesValue));
+            ParseEntityLinkMinOccurrences(vaultEntityLinkMinOccurrencesValue),
+            NormalizeCustomInstructions(aiCustomInstructions),
+            NormalizeCustomInstructions(meetingCustomInstructions));
     }
 
     public async Task SaveAsync(AppSettingsSnapshot settings, CancellationToken cancellationToken = default)
@@ -208,6 +217,25 @@ public sealed class AppSettingsService(ISettingsStore store)
             AppSettingKeys.VaultEntityLinkMinOccurrences,
             settings.VaultEntityLinkMinOccurrences.ToString(),
             cancellationToken);
+        await store.SetAsync(
+            AppSettingKeys.AiCustomInstructions,
+            NormalizeCustomInstructions(settings.AiCustomInstructions),
+            cancellationToken);
+        await store.SetAsync(
+            AppSettingKeys.MeetingCustomInstructions,
+            NormalizeCustomInstructions(settings.MeetingCustomInstructions),
+            cancellationToken);
+    }
+
+    public const int MaximumCustomInstructionsLength = 4000;
+
+    /// <summary>Null-safe, trimmed, defensively truncated to <see cref="MaximumCustomInstructionsLength"/> characters.</summary>
+    internal static string NormalizeCustomInstructions(string? value)
+    {
+        var trimmed = value?.Trim() ?? string.Empty;
+        return trimmed.Length > MaximumCustomInstructionsLength
+            ? trimmed[..MaximumCustomInstructionsLength]
+            : trimmed;
     }
 
     private static IReadOnlyList<string> ParsePaths(string? value) =>
@@ -287,7 +315,9 @@ public sealed record AppSettingsSnapshot(
     bool MeetingIncludeRawLog = true,
     bool MeetingHotkeyEnabled = true,
     string VaultDailyNotesFolder = "",
-    int VaultEntityLinkMinOccurrences = 2)
+    int VaultEntityLinkMinOccurrences = 2,
+    string AiCustomInstructions = "",
+    string MeetingCustomInstructions = "")
 {
     public static IReadOnlyList<TimeOnly> DefaultReminderTimes { get; } = [new(11, 0), new(16, 0)];
 

@@ -6,14 +6,16 @@ namespace WorkLogAI.Core;
 public sealed record AiGenerationRequest(
     WeekRange Range,
     string Model,
-    IReadOnlyList<SourceEvent> SourceEvents);
+    IReadOnlyList<SourceEvent> SourceEvents,
+    string CustomInstructions = "");
 
 public sealed record AiGenerationResult(
     IReadOnlyList<ReportCandidate> Candidates,
     bool InputTruncated,
     int SentEventCount,
     string? Error = null,
-    int DeselectedLocalCount = 0)
+    int DeselectedLocalCount = 0,
+    int SameDayRejectedCount = 0)
 {
     public bool Succeeded => Error is null;
 }
@@ -63,23 +65,30 @@ public sealed class AiCandidatePayload
 
 public sealed record AiValidationResult(
     IReadOnlyList<ReportCandidate> Accepted,
-    IReadOnlyList<string> Rejections);
+    IReadOnlyList<string> Rejections,
+    int SameDayRejectedCount = 0);
 
 public sealed class AiCandidateValidator
 {
+    /// <summary>Rejection message for a candidate that breaks the same-day consolidation rule.</summary>
+    public const string SameDayRejection =
+        "Candidate evidence spans multiple dates or does not match the candidate date.";
+
     private static readonly HashSet<string> AllowedStatuses =
         new(["completed", "ongoing", "pending"], StringComparer.Ordinal);
 
     public AiValidationResult Validate(
         AiCandidateEnvelope envelope,
         WeekRange range,
-        IReadOnlyCollection<Guid> sentEventIds)
+        IReadOnlyCollection<Guid> sentEventIds,
+        IReadOnlyDictionary<Guid, DateOnly>? sentEventDates = null)
     {
         ArgumentNullException.ThrowIfNull(envelope);
         var allowedIds = sentEventIds.ToHashSet();
         var accepted = new List<ReportCandidate>();
         var rejections = new List<string>();
         var confirmationCount = 0;
+        var sameDayRejected = 0;
 
         if (envelope.Candidates is null)
         {
@@ -129,6 +138,17 @@ public sealed class AiCandidateValidator
                 rejections.Add("Candidate evidence is missing or was not sent.");
                 continue;
             }
+            // Weekly reports are day-granular: consolidation is allowed only within one
+            // local date, so every evidence event must fall on the candidate's own date.
+            // Only this candidate is dropped; the rest of the response is unaffected.
+            // Skipped when the caller supplies no event dates (legacy callers).
+            if (sentEventDates is not null
+                && ids.Any(id => !sentEventDates.TryGetValue(id, out var eventDate) || eventDate != date))
+            {
+                rejections.Add(SameDayRejection);
+                sameDayRejected++;
+                continue;
+            }
             if (payload.NeedsConfirmation
                 && (confirmationCount >= 3
                     || string.IsNullOrWhiteSpace(payload.ConfirmationQuestion)))
@@ -170,6 +190,6 @@ public sealed class AiCandidateValidator
                 CandidateOrigins.Ai));
         }
 
-        return new AiValidationResult(accepted, rejections);
+        return new AiValidationResult(accepted, rejections, sameDayRejected);
     }
 }

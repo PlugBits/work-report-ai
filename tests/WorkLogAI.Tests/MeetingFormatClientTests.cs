@@ -306,4 +306,23 @@ public sealed class MeetingFormatClientTests
             return Task.FromResult(existed);
         }
     }
+
+    [Fact]
+    public async Task Custom_instructions_reach_the_outbound_payload_only_when_set()
+    {
+        var handler = new CaptureHandler(SuccessResponse());
+        await Client(handler).FormatAsync(new MeetingFormatRequest(
+            Session(), [Line(1, MeetingMarker.None, "safe", 9, 0)], "gpt-5.6-sol", "専門用語は残す"));
+
+        using var request = JsonDocument.Parse(handler.Body);
+        var instructions = request.RootElement.GetProperty("instructions").GetString()!;
+        Assert.EndsWith("\n\n[ユーザー追加指示]\n専門用語は残す", instructions);
+
+        var plain = new CaptureHandler(SuccessResponse());
+        await Client(plain).FormatAsync(new MeetingFormatRequest(
+            Session(), [Line(1, MeetingMarker.None, "safe", 9, 0)], "gpt-5.6-sol"));
+        using var plainRequest = JsonDocument.Parse(plain.Body);
+        Assert.DoesNotContain(
+            "ユーザー追加指示", plainRequest.RootElement.GetProperty("instructions").GetString());
+    }
 }

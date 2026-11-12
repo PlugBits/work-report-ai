@@ -54,7 +54,7 @@ public sealed class MeetingFormatClient(
                 "議事録の内容が大きすぎるため送信できません。対象行を減らしてください。");
         }
 
-        var body = BuildRequest(request.Model, payload.Input);
+        var body = BuildRequest(request.Model, payload.Input, request.CustomInstructions);
 
         HttpResponseMessage response;
         try
@@ -119,12 +119,12 @@ public sealed class MeetingFormatClient(
             timeoutSource.Token);
     }
 
-    internal static JsonObject BuildRequest(string model, string input) =>
+    internal static JsonObject BuildRequest(string model, string input, string? customInstructions = null) =>
         new()
         {
             ["model"] = model,
             ["store"] = false,
-            ["instructions"] = Instructions,
+            ["instructions"] = CustomInstructionComposer.Append(Instructions, customInstructions),
             ["input"] = input,
             ["reasoning"] = new JsonObject { ["effort"] = "low" },
             ["text"] = new JsonObject

@@ -26,7 +26,7 @@ public sealed class OpenAiResponsesClient(
             return new AiGenerationResult([], false, 0, "OpenAI APIキーが設定されていません。");
         }
 
-        var prompt = promptBuilder.Build(request.Range, request.SourceEvents);
+        var prompt = promptBuilder.Build(request.Range, request.SourceEvents, request.CustomInstructions);
         var body = BuildRequest(request.Model, prompt);
 
         HttpResponseMessage response;
@@ -184,7 +184,8 @@ public sealed class OpenAiResponsesClient(
             {
                 return Failure("OpenAI structured output was empty.", prompt);
             }
-            var validation = validator.Validate(envelope, request.Range, prompt.IncludedEventIds);
+            var validation = validator.Validate(
+                envelope, request.Range, prompt.IncludedEventIds, prompt.IncludedEventDates);
             if (validation.Accepted.Count == 0 && envelope.Candidates.Count > 0)
             {
                 return Failure("OpenAI candidates failed independent validation.", prompt);
@@ -193,7 +194,8 @@ public sealed class OpenAiResponsesClient(
                 validation.Accepted,
                 prompt.Truncated,
                 prompt.IncludedEventIds.Count,
-                null);
+                null,
+                SameDayRejectedCount: validation.SameDayRejectedCount);
         }
         catch (JsonException)
         {

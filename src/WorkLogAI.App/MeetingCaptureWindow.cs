@@ -511,7 +511,11 @@ public sealed class MeetingCaptureWindow : Window
                 ?? throw new InvalidOperationException("セッションが見つかりません。");
             var settings = await _services.Settings.LoadAsync();
 
-            var preview = new MeetingSendPreviewWindow(session, lines, settings.OpenAiModel) { Owner = this };
+            var preview = new MeetingSendPreviewWindow(
+                session,
+                lines,
+                settings.OpenAiModel,
+                !string.IsNullOrWhiteSpace(settings.MeetingCustomInstructions)) { Owner = this };
             if (preview.ShowDialog() != true)
             {
                 return false;

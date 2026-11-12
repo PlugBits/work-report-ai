@@ -979,6 +979,37 @@ public sealed class StorageTests
     }
 
     [Fact]
+    public async Task Custom_instruction_settings_round_trip_separately_default_empty_and_are_capped()
+    {
+        using var temporary = new TemporaryDirectory();
+        var factory = new SqliteConnectionFactory(
+            new FixedDatabasePathProvider(Path.Combine(temporary.Path, "custom-instructions.db")));
+        await new SqliteDatabaseInitializer(factory).InitializeAsync();
+        var store = new SqliteSettingsStore(factory);
+        var service = new AppSettingsService(store);
+
+        var unset = await service.LoadAsync();
+        Assert.Equal(string.Empty, unset.AiCustomInstructions);
+        Assert.Equal(string.Empty, unset.MeetingCustomInstructions);
+
+        SettingKeyPolicy.EnsureNonSecret(AppSettingKeys.AiCustomInstructions);
+        SettingKeyPolicy.EnsureNonSecret(AppSettingKeys.MeetingCustomInstructions);
+
+        await service.SaveAsync(new AppSettingsSnapshot(
+            "サンプル株式会社", "山田 太郎", DayOfWeek.Monday, temporary.Path,
+            AiCustomInstructions: "週報用\n2行目",
+            MeetingCustomInstructions: "議事録用"));
+        var actual = await service.LoadAsync();
+        Assert.Equal("週報用\n2行目", actual.AiCustomInstructions);
+        Assert.Equal("議事録用", actual.MeetingCustomInstructions);
+        Assert.Equal("週報用\n2行目", await store.GetAsync("ai.custom_instructions"));
+        Assert.Equal("議事録用", await store.GetAsync("meeting.custom_instructions"));
+
+        await store.SetAsync(AppSettingKeys.AiCustomInstructions, new string('あ', 5000));
+        Assert.Equal(4000, (await service.LoadAsync()).AiCustomInstructions.Length);
+    }
+
+    [Fact]
     public void Default_database_path_is_injectable_and_sample_mode_is_isolated()
     {
         const string root = @"C:\tmp\WorkLogAIPathTest";

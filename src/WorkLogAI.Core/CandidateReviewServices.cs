@@ -24,15 +24,15 @@ public sealed class CandidateMergeService
 
     private static bool ShouldMerge(ReportCandidate left, ReportCandidate right)
     {
+        // Weekly reports are day-granular: never consolidate across dates.
+        if (left.WorkDate != right.WorkDate)
+        {
+            return false;
+        }
         if (left.SourceEventIds.Intersect(right.SourceEventIds).Any())
         {
             return true;
         }
-        if (Math.Abs(left.WorkDate.DayNumber - right.WorkDate.DayNumber) > 1)
-        {
-            return false;
-        }
-
         var leftText = Normalize($"{left.WorkItem} {left.Activity}");
         var rightText = Normalize($"{right.WorkItem} {right.Activity}");
         return DiceSimilarity(leftText, rightText) >= .72;
@@ -49,7 +49,7 @@ public sealed class CandidateMergeService
         return left with
         {
             Id = StableIdentity.CreateGuid($"merged\n{string.Join(",", evidence)}"),
-            WorkDate = left.WorkDate <= right.WorkDate ? left.WorkDate : right.WorkDate,
+            WorkDate = left.WorkDate,
             WorkItem = Longer(left.WorkItem, right.WorkItem),
             Activity = JoinDistinct(left.Activity, right.Activity),
             ResultOrNext = JoinDistinct(left.ResultOrNext, right.ResultOrNext),

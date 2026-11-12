@@ -317,6 +317,15 @@ operational-quality items already implemented (see Usability additions above).
 
 ## Reliability and generation-quality additions
 
+- **Same-day consolidation constraint**: weekly reports are day-granular, so the AI
+  prompt, the response validator (a candidate whose evidence spans several local dates
+  or differs from the candidate date is dropped individually and reported in the review
+  banner) and `CandidateMergeService` (including 重複候補を統合) only consolidate
+  within a single date.
+- **AI追加指示 fields**: separate free-text instructions for weekly generation
+  (AIタブ) and meeting formatting (議事録/Obsidianタブ), each capped at 4000 characters
+  and appended to the end of the fixed system instructions (append-only; the base
+  instructions and the Structured Outputs schema are never altered).
 - **Mandatory manual-memo coverage in AI generation**: `AiPromptBuilder`'s system
   instructions require that every 手動メモ (manual quick note) evidence item is
   reflected in at least one generated candidate — none may be silently dropped,
@@ -412,7 +421,7 @@ The `WorkLogAI.App` WPF project (`net8.0-windows`) only builds on Windows. On
 non-Windows hosts, build and run `WorkLogAI.Tests` with
 `-p:EnableWindowsTargeting=true`, e.g.
 `dotnet test tests/WorkLogAI.Tests/WorkLogAI.Tests.csproj -p:EnableWindowsTargeting=true`.
-The suite currently has 447 tests.
+The suite currently has 459 tests.
 
 Create the specified self-contained, single-file Windows build with:
 
